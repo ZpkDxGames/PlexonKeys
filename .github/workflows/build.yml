@@ -19,8 +19,8 @@ jobs:
         run: mvn -B -ntp clean verify
       - uses: actions/upload-artifact@v4
         with:
-          name: PlexonKeys-1.0.0
-          path: target/PlexonKeys-1.0.0.jar
+          name: PlexonKeys-1.1.0
+          path: target/PlexonKeys-1.1.0.jar
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()

@@ -1,4 +1,4 @@
-# PlexonKeys 1.0.0
+# PlexonKeys 1.1.0
 
 Activity rewards and virtual key collection for the **Plexon** family, created for **Tonim (ZpkDxGames)**.
 
@@ -8,7 +8,7 @@ Players earn **Basic**, **Rare**, **Epic**, and **Legendary** virtual keys from 
 
 ## Install and bind your keys
 
-1. Stop your server normally. Put `PlexonKeys-1.0.0.jar` in `plugins/` and start Paper 26.2 on Java 25.
+1. Stop your server normally. Put `PlexonKeys-1.1.0.jar` in `plugins/` and start Paper 26.2 on Java 25. When upgrading, remove the old plugin jar; keep `config.yml` and `plexonkeys.db`.
 2. As an operator, run `/keysadmin`. Toggle **Reward drops** off while setting up your real keys.
 3. Obtain your **actual crate key** from the plugin that owns the crate. Hold it in your **main hand**, then run:
 
@@ -49,6 +49,7 @@ Cash and raw XP-point bonuses are paid **when an activity awards a virtual key**
 | Command | Purpose |
 | --- | --- |
 | `/keysadmin setitem <category>` | Save the complete held item as that category's key |
+| `/keysadmin chances [category] [activity]` | Open the chance overview, a category page, or its percentage editor |
 | `/keysadmin chance <category> <activity> <percent>` | Set a precise drop percentage |
 | `/keysadmin give <player\|uuid> <category> <amount>` | Add virtual keys, up to the configured cap |
 | `/keysadmin take <player\|uuid> <category> <amount>` | Remove virtual keys without going below zero |
@@ -66,15 +67,19 @@ Online names and previously recorded names are resolved locally. A UUID can be u
 
 ### GUI editing
 
-- The main admin page offers category settings, global rewards, database save, reload, status, and **Browse all settings**.
+- The main admin page offers category settings, **Chance editor**, global rewards, database save, reload, status, and **Browse all settings**.
 - Each category editor exposes enabling, chat announcements, four independent activity chances, cash/XP toggles and amounts, full item capture, and its advanced section.
-- **Left-click** cash/XP to toggle them; **right-click** to edit their amount. Chances accept exact percentages through a private chat prompt.
+- **Chance editor** shows all 16 category/activity percentages in a grid. Click one to adjust it with **±10**, **±1**, **±0.1**, **±0.01**, or **±0.001** percentage-point buttons. The category pages open the same editor.
+- Chance edits stay in a private draft until **Apply**. **Never (0%)**, **Always (100%)**, and **Reset draft** are shortcuts; **Cancel** or closing the inventory discards the draft. Values cannot go below 0% or above 100%. The saved value and draft are shown together, with decimal arithmetic to avoid accumulating binary addition errors.
+- **Type exact percentage** is an optional private chat input for any finer value; it returns to the draft and still requires **Apply**. Typing `cancel` keeps the existing draft. The numeric GUI works without typing in chat.
+- **Left-click** cash/XP to toggle them; **right-click** to edit their amount.
 - **Browse all settings** traverses every config section, with pagination. Booleans toggle immediately; text, numbers, and lists open a chat prompt. Lists accept `[STONE, DEEPSLATE]` or `[Survival_World]`. Enter `[]` for an empty list, `""` for empty text, or `cancel` to exit.
 - Chat prompts expire after 120 seconds by default. They are private, recheck permissions, and reject stale edits after another configuration change.
-- Every accepted edit validates the whole configuration, atomically replaces `config.yml` when the filesystem supports it, and applies immediately. Invalid values do not replace working settings. Successful changes close other open menus so old buttons cannot execute with a new layout.
+- Every saved edit validates the whole configuration, atomically replaces `config.yml` when the filesystem supports it, and applies immediately. Chance adjustments do not write to disk before **Apply**; applying an unchanged draft also makes no write. Invalid values do not replace working settings. Successful configuration changes close other open menus and discard their drafts so old buttons cannot execute with new settings.
 - If the file was edited externally since the last load, in-game edits are rejected until `/keysadmin reload`, so they do not silently overwrite those file changes.
 - Raw captured NBT is intentionally protected from text editing; use **Capture held key** or `setitem` instead.
 - Admin navigation uses a fixed layout. Its labels, materials, and lore are configurable. The player menu additionally supports custom size, category slots, claim slots, filler, summary, claim-all, admin, and close buttons.
+- Chance editor styling is under `gui.admin.chance-editor`; the overview uses `gui.admin.chances`, `chance-category`, `chance`, and `chances-title`. All names, titles, lore, and messages support MiniMessage. Version 1.0.0 configurations load the new defaults automatically; existing custom values are preserved. Missing defaults are written into `config.yml` on the next accepted in-game edit, so deleting your configuration is unnecessary.
 
 For a multi-field layout change, editing the YAML and reloading once is convenient: all button slots must be unique and inside the configured inventory size. A single GUI edit that would temporarily create overlapping slots is rejected.
 
@@ -160,7 +165,7 @@ Requires JDK 25 and Maven 3.9+:
 mvn -B -ntp clean verify
 ```
 
-Output: `target/PlexonKeys-1.0.0.jar`, with SQLite bundled. Paper, Adventure, and the test framework are **not** bundled. Install only this jar, not `original-PlexonKeys-1.0.0.jar`. GitHub Actions runs the same build and uploads the plugin and test reports for each push/PR.
+Output: `target/PlexonKeys-1.1.0.jar`, with SQLite bundled. Paper, Adventure, and the test framework are **not** bundled. Install only this jar, not `original-PlexonKeys-1.1.0.jar`. GitHub Actions runs the same build and uploads the plugin and test reports for each push/PR.
 
 The build pins Paper API `26.2.build.121-stable`. Automated coverage uses JUnit, SQLite, and MockBukkit for Paper 26.2. It exercises startup, shutdown persistence, canceled/placed-block events, generation tracking, chance boundaries, spawn filters, inventory capacity, menu security, configuration validation, and item capture/claim behavior. These tests do not replace a live staging check against the specific crate, protection, economy, and multi-block-tool plugins installed on your server. See [TESTING.md](TESTING.md).
 

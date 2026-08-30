@@ -25,7 +25,7 @@ public final class Configuration {
     public Settings reload() throws Exception {
         String contents = Files.readString(file, StandardCharsets.UTF_8);
         var config = new YamlConfiguration();
-        config.loadFromString(contents); config.setDefaults(defaults); config.options().copyDefaults(true);
+        config.loadFromString(contents); fillDefaults(config);
         Settings next = Settings.parse(config);
         settings = next; diskContents = contents; revision++;
         return next;
@@ -36,8 +36,8 @@ public final class Configuration {
         if (!Objects.equals(diskContents, Files.readString(file, StandardCharsets.UTF_8)))
             throw new IllegalStateException("config.yml changed on disk. Run /keysadmin reload before editing in-game");
         var copy = new YamlConfiguration(); copy.loadFromString(settings.yaml().saveToString());
-        copy.setDefaults(defaults); copy.options().copyDefaults(true);
         changes.accept(copy);
+        fillDefaults(copy);
         Settings next = Settings.parse(copy);
         String output = copy.saveToString();
         Path temp = Files.createTempFile(file.getParent(), "config-", ".tmp");
@@ -48,6 +48,17 @@ public final class Configuration {
         } finally { Files.deleteIfExists(temp); }
         settings = next; diskContents = output; revision++;
         return next;
+    }
+    private void fillDefaults(YamlConfiguration config) {
+        config.setDefaults(defaults); config.options().copyDefaults(true);
+        // Bukkit getters with an explicit fallback do not consult inherited defaults. Materialize
+        // missing values in memory so a pre-upgrade config renders new GUI items correctly too.
+        for (String key : defaults.getKeys(true)) {
+            if (defaults.isConfigurationSection(key)) {
+                if (!config.contains(key, true)) config.createSection(key);
+                else if (!config.isConfigurationSection(key)) throw new IllegalArgumentException(key + ": expected a configuration section");
+            } else if (!config.contains(key, true)) config.set(key, defaults.get(key));
+        }
     }
     public Settings capture(KeyTier tier, org.bukkit.inventory.ItemStack item) throws Exception {
         String encoded = Items.capture(item);

@@ -1,4 +1,4 @@
-# PlexonKeys 1.0.0 | Created for the Plexon family by Tonim (ZpkDxGames)
+# PlexonKeys 1.1.0 | Created for the Plexon family by Tonim (ZpkDxGames)
 # Paper 26.2 / Java 25. ALL text uses MiniMessage, not legacy & color codes.
 # Percentages: 1.0 = 1%, 0.05 = 0.05%, 100 = always, 0 = never.
 # Configure in /keysadmin, or edit this file and run /keysadmin reload.
@@ -233,6 +233,7 @@ gui:
   admin:
     title: '<gold><bold>PLEXONKEYS</bold></gold> <dark_gray>•</dark_gray> <gray>Admin</gray>'
     category-title: '<gold>Configure</gold> <dark_gray>•</dark_gray> <category>'
+    chances-title: '<gold>Drop chances</gold> <dark_gray>•</dark_gray> <gray>All categories</gray>'
     browser-title: '<gold>Configuration</gold> <dark_gray>•</dark_gray> <gray><page></gray>'
     prompt-timeout-seconds: 120
     # The admin menu is a fixed navigation layout. All labels below support MiniMessage.
@@ -242,7 +243,23 @@ gui:
     announce: {material: BELL, name: '<white>Chat announcements</white> <dark_gray>»</dark_gray> <yellow><value></yellow>', lore: ['<gray>Click to toggle this category.</gray>']}
     money: {material: GOLD_INGOT, name: '<white>Cash bonus</white> <dark_gray>»</dark_gray> <yellow><value></yellow>', lore: ['<gray>Left: toggle • Right: edit amount.</gray>', '<gray>Amount:</gray> <white><amount></white>', '<dark_gray>Requires Vault and an economy provider.</dark_gray>']}
     xp: {material: EXPERIENCE_BOTTLE, name: '<white>XP bonus</white> <dark_gray>»</dark_gray> <yellow><value></yellow>', lore: ['<gray>Left: toggle • Right: edit points.</gray>', '<gray>Points:</gray> <white><amount></white>', '<dark_gray>Raw XP points, not levels.</dark_gray>']}
-    chance: {material: PAPER, name: '<white><activity></white> <dark_gray>»</dark_gray> <yellow><value>%</yellow>', lore: ['', '<gray>Click to enter a precise percentage.</gray>', '<dark_gray>0 = never • 100 = always</dark_gray>']}
+    chances: {material: COMPARATOR, name: '<aqua>Chance editor</aqua>', lore: ['', '<gray>All four categories and activities.</gray>', '<gray>Adjust percentages with GUI buttons.</gray>', '<dark_gray>Only Apply saves your changes.</dark_gray>']}
+    chance-category: {material: TRIPWIRE_HOOK, name: '<category>', lore: ['<gray>Activity chances are listed below.</gray>', '<gray>Click for this category settings.</gray>']}
+    chance: {material: PAPER, name: '<white><activity></white> <dark_gray>»</dark_gray> <yellow><value>%</yellow>', lore: ['', '<gray>Category:</gray> <category>', '<gray>Click to open the percentage editor.</gray>', '<dark_gray>0 = never • 100 = always when eligible</dark_gray>']}
+    # Fixed button steps are +/- 10, 1, 0.1, 0.01, and 0.001 percentage points.
+    # Adjustments and exact input are drafts until Apply; Esc/Cancel discard them.
+    chance-editor:
+      title: '<category> <dark_gray>•</dark_gray> <activity>'
+      context: {material: BOOK, name: '<category> <dark_gray>•</dark_gray> <activity>', lore: ['<gray>Rewards enabled:</gray> <white><rewards_enabled></white>', '<gray>Category enabled:</gray> <white><category_enabled></white>', '<gray>Activity enabled:</gray> <white><activity_enabled></white>', '', '<dark_gray>Eligibility filters and roll mode still apply.</dark_gray>']}
+      value: {material: PAPER, name: '<yellow><value>%</yellow>', lore: ['<gray>Saved percentage:</gray> <white><original>%</white>', '<gray>Unsaved changes:</gray> <white><changed></white>', '', '<gray>Red buttons decrease; green buttons increase.</gray>', '<gray>Apply saves; Cancel or Esc discards changes.</gray>']}
+      decrease: {material: RED_DYE, name: '<red>-<step>%</red>', lore: ['<gray>Subtract <step> percentage points.</gray>', '<dark_gray>Minimum: 0%</dark_gray>']}
+      increase: {material: LIME_DYE, name: '<green>+<step>%</green>', lore: ['<gray>Add <step> percentage points.</gray>', '<dark_gray>Maximum: 100%</dark_gray>']}
+      never: {material: REDSTONE_BLOCK, name: '<red>Never: 0%</red>', lore: ['<gray>Set the draft to zero.</gray>', '<dark_gray>Click Apply to save.</dark_gray>']}
+      reset: {material: CLOCK, name: '<yellow>Reset draft</yellow>', lore: ['<gray>Restore the saved value: <original>%.</gray>', '<dark_gray>Does not change the configuration.</dark_gray>']}
+      always: {material: EMERALD_BLOCK, name: '<green>Always: 100%</green>', lore: ['<gray>Set the draft to 100% for eligible actions.</gray>', '<dark_gray>Click Apply to save.</dark_gray>']}
+      cancel: {material: BARRIER, name: '<red>Cancel</red>', lore: ['<gray>Discard this draft and go back.</gray>']}
+      apply: {material: LIME_CONCRETE, name: '<green>Apply <value>%</green>', lore: ['<gray><original>% → <value>%</gray>', '', '<gray>Save this category/activity to config.yml.</gray>', '<gray>Changes take effect immediately.</gray>']}
+      exact: {material: NAME_TAG, name: '<aqua>Type exact percentage</aqua>', lore: ['<gray>Optional: enter any precise value in private chat.</gray>', '<gray>You still need to click Apply afterward.</gray>']}
     capture: {material: HOPPER, name: '<aqua>Capture held key</aqua>', lore: ['', '<gray>Hold your real key in your main hand.</gray>', '<gray>Click to store its complete item data.</gray>', '<dark_gray>Does not consume the held item.</dark_gray>']}
     advanced: {material: WRITABLE_BOOK, name: '<yellow>Browse all settings</yellow>', lore: ['<gray>Edit text, lists, filters, menus, and more.</gray>']}
     save: {material: CHEST, name: '<green>Save database now</green>', lore: ['<gray>Write a manual asynchronous checkpoint.</gray>']}
@@ -274,6 +291,9 @@ messages:
   item-captured: '<green>Captured the held item for <category><green>. Full item data saved; one virtual key delivers one item.</green>'
   reloaded: '<green>Configuration validated and reloaded.</green>'
   setting-saved: '<green>Saved</green> <white><path></white><green>.</green>'
+  chance-saved: '<green>Saved <category> <green>chance for <activity>: <yellow><value>%</yellow>.</green>'
+  chance-prompt: '<gray>Enter a percentage from <white>0</white> to <white>100</white> in chat, for example <yellow>0.003</yellow>. Type <yellow>cancel</yellow> to keep your draft. Click <green>Apply</green> in the editor to save.</gray>'
+  chance-invalid: '<red>Enter a valid percentage from 0 to 100. Your draft has not changed.</red>'
   config-error: '<red>Change rejected:</red> <gray><error></gray> <yellow>The last valid configuration is still active.</yellow>'
   saving: '<gray>Saving changed balances and block records…</gray>'
   saved: '<green>Saved <players> player records and <blocks> block changes in <time>ms.</green>'
@@ -284,4 +304,4 @@ messages:
   prompt-expired: '<yellow>This edit expired or the configuration changed. Open the editor again.</yellow>'
   status: '<gray>Players: <players> • Tracked blocks: <blocks> • Unsaved records: <dirty> • Checkpoint: <checkpoint>s • Economy: <economy></gray>'
   usage: '<gray>Use <white>/keys</white> or <white>/keys claim \<category|all></white>.</gray>'
-  admin-help: '<gold>Administration</gold><newline><gray>/keysadmin — open GUI<newline>/keysadmin setitem \<category> — copy held key<newline>/keysadmin chance \<category> \<activity> \<percent><newline>/keysadmin give|take|setbalance \<player|uuid> \<category> \<amount><newline>/keysadmin balance \<player|uuid><newline>/keysadmin set \<config.path> \<value><newline>/keysadmin reload|save|status</gray>'
+  admin-help: '<gold>Administration</gold><newline><gray>/keysadmin — open GUI<newline>/keysadmin chances [category] [activity] — open chance editor<newline>/keysadmin setitem \<category> — copy held key<newline>/keysadmin chance \<category> \<activity> \<percent><newline>/keysadmin give|take|setbalance \<player|uuid> \<category> \<amount><newline>/keysadmin balance \<player|uuid><newline>/keysadmin set \<config.path> \<value><newline>/keysadmin reload|save|status</gray>'

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.0 — 2026-08-30
+
+- Added a chance overview for all 16 category/activity pairs through `/keysadmin chances` and the main admin GUI.
+- Category chance buttons now open a percentage editor with fine/coarse adjustments, 0%/100% shortcuts, reset, Apply, and Cancel.
+- Decimal draft arithmetic preserves small percentages; only Apply saves to `config.yml` and activates the selected chance. No repeating task or per-click disk write is added.
+- Optional exact chat input returns to the draft without saving; permissions, stale configuration checks, and inventory protections also cover the new menus.
+- All new labels and messages support configurable MiniMessage styling; existing 1.0.0 configurations pick up missing defaults without replacing custom settings.
+
 ## 1.0.0 — 2026-08-30
 
 - Initial PlexonKeys plugin for Paper 26.2 / Java 25, authored for Tonim (ZpkDxGames).

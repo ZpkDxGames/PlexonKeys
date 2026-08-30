@@ -39,6 +39,14 @@ public final class KeysCommand implements CommandExecutor, TabCompleter {
                 case "reload" -> plugin.reloadFor(sender);
                 case "save" -> plugin.saveData(sender);
                 case "status" -> text().send(sender, "status", plugin.statusTags());
+                case "chances" -> {
+                    if (args.length > 3) { text().send(sender, "admin-help"); break; }
+                    if (!(sender instanceof Player player)) { text().send(sender, "players-only"); break; }
+                    if (args.length == 1) { plugin.menus().openChances(player); break; }
+                    KeyTier tier = tier(sender, args[1]); if (tier == null) break;
+                    if (args.length == 2) plugin.menus().openCategory(player, tier);
+                    else plugin.menus().openChanceEditor(player, tier, Activity.parse(args[2]));
+                }
                 case "setitem" -> {
                     if (args.length != 2) { text().send(sender, "admin-help"); break; }
                     if (!(sender instanceof Player player)) { text().send(sender, "players-only"); break; }
@@ -112,16 +120,16 @@ public final class KeysCommand implements CommandExecutor, TabCompleter {
         boolean admin = command.getName().equals("keysadmin");
         if (admin && !sender.hasPermission("plexonkeys.admin")) return List.of();
         if (!admin && !sender.hasPermission("plexonkeys.use")) return List.of();
-        if (args.length == 1) options.addAll(admin ? List.of("help", "setitem", "chance", "give", "take", "setbalance", "balance", "set", "reload", "save", "status") : List.of("claim"));
+        if (args.length == 1) options.addAll(admin ? List.of("help", "setitem", "chances", "chance", "give", "take", "setbalance", "balance", "set", "reload", "save", "status") : List.of("claim"));
         if (!admin && args.length == 1 && sender.hasPermission("plexonkeys.admin")) options.add("admin");
-        if (args.length == 2 && ((!admin && args[0].equalsIgnoreCase("claim")) || (admin && Set.of("setitem", "chance").contains(args[0].toLowerCase(Locale.ROOT))))) {
+        if (args.length == 2 && ((!admin && args[0].equalsIgnoreCase("claim")) || (admin && Set.of("setitem", "chance", "chances").contains(args[0].toLowerCase(Locale.ROOT))))) {
             Arrays.stream(KeyTier.values()).map(KeyTier::id).forEach(options::add); if (!admin) options.add("all");
         }
         if (admin && args.length == 2 && Set.of("give", "take", "setbalance", "balance").contains(args[0].toLowerCase(Locale.ROOT)))
             Stream.concat(Bukkit.getOnlinePlayers().stream().map(Player::getName), plugin.data().names().stream()).distinct().limit(1000).forEach(options::add);
         if (admin && args.length == 2 && args[0].equalsIgnoreCase("set")) plugin.settings().yaml().getKeys(true).stream()
                 .filter(key -> !plugin.settings().yaml().isConfigurationSection(key) && !key.equals("config-version") && !key.endsWith(".base64")).forEach(options::add);
-        if (admin && args.length == 3 && args[0].equalsIgnoreCase("chance")) Arrays.stream(Activity.values()).map(Activity::id).forEach(options::add);
+        if (admin && args.length == 3 && Set.of("chance", "chances").contains(args[0].toLowerCase(Locale.ROOT))) Arrays.stream(Activity.values()).map(Activity::id).forEach(options::add);
         if (admin && args.length == 3 && Set.of("give", "take", "setbalance").contains(args[0].toLowerCase(Locale.ROOT))) Arrays.stream(KeyTier.values()).map(KeyTier::id).forEach(options::add);
         String prefix = args.length == 0 ? "" : args[args.length - 1].toLowerCase(Locale.ROOT);
         return options.stream().filter(value -> value.toLowerCase(Locale.ROOT).startsWith(prefix)).toList();

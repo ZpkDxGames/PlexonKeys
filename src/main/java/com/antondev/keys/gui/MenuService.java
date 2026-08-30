@@ -4,8 +4,10 @@ import com.antondev.keys.PlexonKeys;
 import com.antondev.keys.config.*;
 import com.antondev.keys.model.*;
 import io.papermc.paper.event.player.AsyncChatEvent;
+import java.math.BigDecimal;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
@@ -19,7 +21,8 @@ import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.ItemStack;
 
 public final class MenuService implements Listener {
-    private record Prompt(String path, long revision, long expiresAt, KeyMenu previous) {}
+    private static final List<BigDecimal> CHANCE_STEPS = List.of("10", "1", "0.1", "0.01", "0.001").stream().map(BigDecimal::new).toList();
+    private record Prompt(String path, long revision, long expiresAt, KeyMenu previous, AtomicBoolean received) {}
     private final PlexonKeys plugin;
     private final Map<UUID, Prompt> prompts = new ConcurrentHashMap<>();
     private final Set<UUID> pendingClicks = new HashSet<>();
@@ -79,6 +82,7 @@ public final class MenuService implements Listener {
             button(menu, slot, "gui.admin.category", click -> openCategory(player, tier), category(tier)); slot += 2;
         }
         button(menu, 4, "gui.admin.status", null, plugin.statusTags());
+        button(menu, 22, "gui.admin.chances", click -> openChances(player));
         button(menu, 31, "gui.admin.enabled", click -> toggle(player, menu, "settings.enabled"), Text.value("value", plugin.settings().enabled()));
         button(menu, 39, "gui.admin.save", click -> plugin.saveData(player));
         button(menu, 40, "gui.admin.advanced", click -> openBrowser(player, "", 0));
@@ -110,8 +114,7 @@ public final class MenuService implements Listener {
         });
         int slot = 28;
         for (Activity activity : Activity.values()) {
-            button(menu, slot, "gui.admin.chance", click -> prompt(player, menu, path + ".chances." + activity.id()),
-                    Text.value("activity", plugin.settings().tasks().get(activity).display()), Text.value("value", c.chances().get(activity)));
+            button(menu, slot, "gui.admin.chance", click -> openChanceEditor(player, tier, activity, menu), chanceTags(tier, activity));
             slot += 2;
         }
         button(menu, 45, "gui.admin.back", click -> openAdmin(player));
@@ -120,6 +123,70 @@ public final class MenuService implements Listener {
         player.openInventory(menu.inventory);
     }
     private TagResolver category(KeyTier tier) { return Text.component("category", Text.parse(plugin.settings().categories().get(tier).display())); }
+    private TagResolver activity(Activity activity) { return Text.component("activity", Text.parse(plugin.settings().tasks().get(activity).display())); }
+    private TagResolver[] chanceTags(KeyTier tier, Activity activity) {
+        return new TagResolver[] {category(tier), activity(activity),
+                Text.value("value", BigDecimal.valueOf(plugin.settings().categories().get(tier).chances().get(activity)).stripTrailingZeros().toPlainString())};
+    }
+    public void openChances(Player player) {
+        if (!allowed(player, "plexonkeys.admin")) return;
+        KeyMenu menu = create(player, KeyMenu.Kind.CHANCES, 54, Text.parse(config().getString("gui.admin.chances-title")), null, "", 0);
+        button(menu, 4, "gui.admin.chances", null);
+        int column = 1;
+        for (KeyTier tier : KeyTier.values()) {
+            button(menu, column, "gui.admin.chance-category", click -> openCategory(player, tier), category(tier));
+            for (Activity activity : Activity.values()) {
+                int slot = column + 9 * (activity.ordinal() + 1);
+                button(menu, slot, "gui.admin.chance", click -> openChanceEditor(player, tier, activity, menu), chanceTags(tier, activity));
+            }
+            column += 2;
+        }
+        button(menu, 45, "gui.admin.back", click -> openAdmin(player));
+        button(menu, 53, "gui.admin.close", click -> player.closeInventory());
+        player.openInventory(menu.inventory);
+    }
+    public void openChanceEditor(Player player, KeyTier tier, Activity activity) { openChanceEditor(player, tier, activity, null); }
+    private void openChanceEditor(Player player, KeyTier tier, Activity activity, KeyMenu previous) {
+        if (!allowed(player, "plexonkeys.admin")) return;
+        KeyMenu menu = create(player, KeyMenu.Kind.CHANCE_EDITOR, 54,
+                Text.parse(config().getString("gui.admin.chance-editor.title"), category(tier), activity(activity)),
+                tier, "categories." + tier.id() + ".chances." + activity.id(), 0);
+        menu.chance = new ChanceDraft(activity, plugin.settings().categories().get(tier).chances().get(activity), previous);
+        renderChanceEditor(player, menu); player.openInventory(menu.inventory);
+    }
+    private void renderChanceEditor(Player player, KeyMenu menu) {
+        ChanceDraft draft = menu.chance;
+        String path = "gui.admin.chance-editor.";
+        TagResolver[] tags = {category(menu.tier), activity(draft.activity), Text.value("value", draft.valueText()),
+                Text.value("original", draft.originalText()), Text.value("changed", draft.changed()),
+                Text.value("category_enabled", plugin.settings().categories().get(menu.tier).enabled()),
+                Text.value("activity_enabled", plugin.settings().tasks().get(draft.activity).enabled()),
+                Text.value("rewards_enabled", plugin.settings().enabled())};
+        button(menu, 4, path + "context", null, tags);
+        button(menu, 22, path + "value", null, tags);
+        for (int i = 0; i < CHANCE_STEPS.size(); i++) {
+            BigDecimal step = CHANCE_STEPS.get(i);
+            button(menu, 11 + i, path + "decrease", click -> { draft.adjust(step.negate()); renderChanceEditor(player, menu); }, Text.value("step", step.toPlainString()));
+            button(menu, 29 + i, path + "increase", click -> { draft.adjust(step); renderChanceEditor(player, menu); }, Text.value("step", step.toPlainString()));
+        }
+        button(menu, 38, path + "never", click -> { draft.never(); renderChanceEditor(player, menu); }, tags);
+        button(menu, 40, path + "reset", click -> { draft.reset(); renderChanceEditor(player, menu); }, tags);
+        button(menu, 42, path + "always", click -> { draft.always(); renderChanceEditor(player, menu); }, tags);
+        button(menu, 45, path + "cancel", click -> returnFromChance(player, draft), tags);
+        button(menu, 49, path + "apply", click -> applyChance(player, menu), tags);
+        button(menu, 53, path + "exact", click -> prompt(player, menu, menu.path), tags);
+    }
+    private void returnFromChance(Player player, ChanceDraft draft) {
+        if (draft.previous == null) openChances(player); else reopen(player, draft.previous);
+    }
+    private void applyChance(Player player, KeyMenu menu) {
+        if (!menu.chance.changed()) { returnFromChance(player, menu.chance); return; }
+        try {
+            plugin.configuration().set(menu.path, menu.chance.valueText()); plugin.settingsChanged();
+            plugin.settings().text().send(player, "chance-saved", category(menu.tier), activity(menu.chance.activity), Text.value("value", menu.chance.valueText()));
+            returnFromChance(player, menu.chance);
+        } catch (Exception error) { plugin.configError(player, error); }
+    }
     public void openBrowser(Player player, String path, int page) {
         if (!allowed(player, "plexonkeys.admin")) return;
         ConfigurationSection section = path.isEmpty() ? config() : config().getConfigurationSection(path);
@@ -166,30 +233,39 @@ public final class MenuService implements Listener {
             case PLAYER -> openPlayer(player);
             case ADMIN -> openAdmin(player);
             case CATEGORY -> openCategory(player, menu.tier);
+            case CHANCES -> openChances(player);
+            case CHANCE_EDITOR -> { renderChanceEditor(player, menu); player.openInventory(menu.inventory); }
             case BROWSER -> openBrowser(player, menu.path, menu.page);
         }
     }
     private void prompt(Player player, KeyMenu menu, String path) {
         player.closeInventory();
         prompts.put(player.getUniqueId(), new Prompt(path, plugin.configuration().revision(), System.currentTimeMillis()
-                + config().getInt("gui.admin.prompt-timeout-seconds") * 1000L, menu));
-        plugin.settings().text().send(player, "prompt", Text.value("path", path));
-        plugin.settings().text().send(player, "prompt-current", Text.value("value", preview(config().get(path))));
+                + config().getInt("gui.admin.prompt-timeout-seconds") * 1000L, menu, new AtomicBoolean()));
+        boolean chance = menu.kind == KeyMenu.Kind.CHANCE_EDITOR;
+        plugin.settings().text().send(player, chance ? "chance-prompt" : "prompt", Text.value("path", path));
+        plugin.settings().text().send(player, "prompt-current", Text.value("value", chance ? menu.chance.valueText() : preview(config().get(path))));
     }
     @EventHandler(priority = EventPriority.LOWEST)
     public void chat(AsyncChatEvent event) {
-        Prompt prompt = prompts.remove(event.getPlayer().getUniqueId());
-        if (prompt == null) return;
+        Prompt prompt = prompts.get(event.getPlayer().getUniqueId());
+        if (prompt == null || !prompt.received().compareAndSet(false, true)) return;
         event.setCancelled(true);
         String input = PlainTextComponentSerializer.plainText().serialize(event.originalMessage()).trim();
         Bukkit.getScheduler().runTask(plugin, () -> {
             Player player = event.getPlayer();
+            // Opening another menu, reloading, or quitting invalidates even an already queued reply.
+            if (!prompts.remove(player.getUniqueId(), prompt)) return;
             if (!player.isOnline() || !allowed(player, "plexonkeys.admin")) return;
             if (System.currentTimeMillis() > prompt.expiresAt() || prompt.revision() != plugin.configuration().revision()) {
                 plugin.settings().text().send(player, "prompt-expired"); return;
             }
             if (input.equalsIgnoreCase("cancel")) { plugin.settings().text().send(player, "prompt-cancelled"); reopen(player, prompt.previous()); return; }
-            edit(player, prompt.previous(), prompt.path(), input);
+            if (prompt.previous().kind == KeyMenu.Kind.CHANCE_EDITOR) {
+                try { prompt.previous().chance.exact(input); }
+                catch (IllegalArgumentException error) { plugin.settings().text().send(player, "chance-invalid"); }
+                reopen(player, prompt.previous());
+            } else edit(player, prompt.previous(), prompt.path(), input);
         });
     }
     @EventHandler(priority = EventPriority.HIGHEST)
