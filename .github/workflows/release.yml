@@ -1,0 +1,97 @@
+name: Publish PlexonKeys releases
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/release.yml'
+      - '.github/scripts/release.py'
+      - 'releases/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plexonkeys-releases
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    if: github.repository == 'ZpkDxGames/PlexonKeys' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.versions.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: versions
+        run: python3 .github/scripts/release.py plan
+
+  build:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.commit }}
+          path: source
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+          cache-dependency-path: source/pom.xml
+      - name: Build and test the exact release source
+        working-directory: source
+        run: mvn -B -ntp clean verify
+      - name: Verify the JAR and create its checksum
+        env:
+          RELEASE_VERSION: ${{ matrix.version }}
+        run: python3 .github/scripts/release.py verify
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.version }}
+          path: |
+            source/target/PlexonKeys-${{ matrix.version }}.jar
+            source/target/SHA256SUMS.txt
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-tests-${{ matrix.version }}
+          path: source/target/surefire-reports/
+
+  publish:
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-${{ matrix.version }}
+          path: dist
+      - name: Publish the verified JAR and checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_VERSION: ${{ matrix.version }}
+        run: python3 .github/scripts/release.py publish
