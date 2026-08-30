@@ -1,0 +1,287 @@
+# PlexonKeys 1.0.0 | Created for the Plexon family by Tonim (ZpkDxGames)
+# Paper 26.2 / Java 25. ALL text uses MiniMessage, not legacy & color codes.
+# Percentages: 1.0 = 1%, 0.05 = 0.05%, 100 = always, 0 = never.
+# Configure in /keysadmin, or edit this file and run /keysadmin reload.
+config-version: 1
+
+settings:
+  enabled: true
+  # INDEPENDENT: each category rolls once; multiple categories can win per action.
+  # HIGHEST_ONLY: Legendary -> Epic -> Rare -> Basic, stop after the first success.
+  # In HIGHEST_ONLY, lower categories' effective chances are reduced by prior rolls.
+  roll-mode: INDEPENDENT
+  max-virtual-per-category: 1000000
+  allowed-game-modes: [SURVIVAL]
+  # Names are case-insensitive; [] means every world. Exclusions take priority.
+  worlds: []
+  excluded-worlds: []
+
+storage:
+  # Always saves on normal shutdown / plugin disable. No periodic saving by default.
+  # /keysadmin save is an asynchronous manual checkpoint.
+  # OPTIONAL: 300 saves only dirty rows every 5 minutes, on one background worker.
+  # Set 0 to disable. Otherwise minimum 60 seconds, maximum 86400.
+  # WARNING: crashes / kill -9 lose changes since the last successful save.
+  # SQLite, inventories, and Vault cannot share an atomic transaction; a forced
+  # crash can also restore already-claimed keys or roll back acquisition bonuses.
+  checkpoint-seconds: 0
+
+tracking:
+  # Player placement, pistons, and falling blocks are always tracked, even when
+  # rewards/worlds/categories are disabled. No chunk scans or per-block SQL.
+  # Growth events after installation are considered non-natural by default.
+  exclude-grown-blocks: true
+  # Prevent cobblestone/stone/obsidian generators from producing eligible blocks.
+  exclude-formed-blocks: true
+  # Cannot identify old placements or WorldEdit/other plugins bypassing events.
+
+activities:
+  mining:
+    enabled: true
+    display-name: 'mining'
+    # Per player/activity, applied to eligible actions (not just successful rolls).
+    # 0 permits each natural block, including multi-block tools, to roll.
+    cooldown-ms: 0
+    # Respect plugins that suppress block drops, and require a suitable tool.
+    require-drops: true
+    # Empty = any block, excluding the logging material list.
+    materials:
+      - STONE
+      - DEEPSLATE
+      - GRANITE
+      - DIORITE
+      - ANDESITE
+      - TUFF
+      - CALCITE
+      - NETHERRACK
+      - BLACKSTONE
+      - BASALT
+      - END_STONE
+      - COAL_ORE
+      - DEEPSLATE_COAL_ORE
+      - COPPER_ORE
+      - DEEPSLATE_COPPER_ORE
+      - IRON_ORE
+      - DEEPSLATE_IRON_ORE
+      - GOLD_ORE
+      - DEEPSLATE_GOLD_ORE
+      - REDSTONE_ORE
+      - DEEPSLATE_REDSTONE_ORE
+      - LAPIS_ORE
+      - DEEPSLATE_LAPIS_ORE
+      - DIAMOND_ORE
+      - DEEPSLATE_DIAMOND_ORE
+      - EMERALD_ORE
+      - DEEPSLATE_EMERALD_ORE
+      - NETHER_GOLD_ORE
+      - NETHER_QUARTZ_ORE
+      - ANCIENT_DEBRIS
+  logging:
+    enabled: true
+    display-name: 'woodcutting'
+    cooldown-ms: 0
+    materials: [OAK_LOG, SPRUCE_LOG, BIRCH_LOG, JUNGLE_LOG, ACACIA_LOG, DARK_OAK_LOG, MANGROVE_LOG, CHERRY_LOG, PALE_OAK_LOG, CRIMSON_STEM, WARPED_STEM]
+  fishing:
+    enabled: true
+    display-name: 'fishing'
+    cooldown-ms: 1500
+    # Only CAUGHT_FISH with actual item loot counts, never casts or hooked mobs.
+    require-open-water: true
+  mobs:
+    enabled: true
+    display-name: 'mob hunting'
+    cooldown-ms: 0
+    # Empty = all living non-player mobs, except armor stands.
+    types: []
+    # Paper stores the original spawn reason. Spawners, eggs, commands, breeding,
+    # and custom-plugin mobs are excluded by default. [] allows all spawn reasons.
+    allowed-spawn-reasons: [NATURAL, CHUNK_GEN, PATROL, RAID, REINFORCEMENTS]
+
+notifications:
+  personal-chat: true
+  sound: 'minecraft:entity.experience_orb.pickup'
+  sound-volume: 0.6
+  sound-pitch: 1.2
+
+categories:
+  basic:
+    enabled: true
+    display-name: '<gradient:#C7CDD8:#F3F5F7><bold>Basic</bold></gradient>'
+    permission: ''
+    chances: {mining: 0.20, logging: 0.35, fishing: 3.0, mobs: 0.75}
+    announce:
+      enabled: false
+      message: '<dark_gray>✦</dark_gray> <white><player></white> <gray>found a <category> <gray>key while <activity>!</gray>'
+    bonus:
+      money: {enabled: false, amount: 10.0}
+      xp: {enabled: false, points: 5}
+    item:
+      # CONFIG creates the sample below. CAPTURED uses ONLY the base64 NBT data.
+      # Hold your real crate key and run /keysadmin setitem basic.
+      # Capture normalizes the stack amount to 1; all item metadata is retained.
+      mode: CONFIG
+      base64: ''
+      material: TRIPWIRE_HOOK
+      name: '<gradient:#C7CDD8:#F3F5F7><bold>Basic Key</bold></gradient>'
+      lore: ['', '<dark_gray>PLEXON COLLECTION</dark_gray>', '<gray>A small key. A fresh possibility.</gray>', '', '<white>✦</white> <gray>Basic quality</gray>']
+      glow: false
+    menu:
+      icon-slot: 10
+      claim-slot: 19
+      # Menu cosmetics never modify the physical key template.
+      material: LIGHT_GRAY_DYE
+      name: '<category> <white>Key</white>'
+      lore: ['', '<gray>Virtual keys</gray> <dark_gray>»</dark_gray> <white><balance></white>', '', '<gray>Mine, fish, chop, and explore.</gray>', '<dark_gray>Claim your keys using the panel below.</dark_gray>']
+  rare:
+    enabled: true
+    display-name: '<gradient:#56B9F2:#92E1FF><bold>Rare</bold></gradient>'
+    permission: ''
+    chances: {mining: 0.06, logging: 0.10, fishing: 1.0, mobs: 0.25}
+    announce:
+      enabled: false
+      message: '<aqua>✦</aqua> <white><player></white> <gray>found a <category> <gray>key while <activity>!</gray>'
+    bonus:
+      money: {enabled: false, amount: 25.0}
+      xp: {enabled: false, points: 15}
+    item:
+      mode: CONFIG
+      base64: ''
+      material: TRIPWIRE_HOOK
+      name: '<gradient:#56B9F2:#92E1FF><bold>Rare Key</bold></gradient>'
+      lore: ['', '<dark_gray>PLEXON COLLECTION</dark_gray>', '<gray>A little luck goes a long way.</gray>', '', '<aqua>✦</aqua> <gray>Rare quality</gray>']
+      glow: true
+    menu:
+      icon-slot: 12
+      claim-slot: 21
+      material: LIGHT_BLUE_DYE
+      name: '<category> <white>Key</white>'
+      lore: ['', '<gray>Virtual keys</gray> <dark_gray>»</dark_gray> <white><balance></white>', '', '<gray>A bright find from a busy day.</gray>', '<dark_gray>Claim your keys using the panel below.</dark_gray>']
+  epic:
+    enabled: true
+    display-name: '<gradient:#B883F5:#E2B3FF><bold>Epic</bold></gradient>'
+    permission: ''
+    chances: {mining: 0.015, logging: 0.025, fishing: 0.25, mobs: 0.07}
+    announce:
+      enabled: true
+      message: '<light_purple>✦</light_purple> <white><player></white> <gray>discovered an <category> <gray>key while <activity>!</gray> <click:run_command:/keys><dark_gray>[</dark_gray><light_purple>/keys</light_purple><dark_gray>]</dark_gray></click>'
+    bonus:
+      money: {enabled: false, amount: 75.0}
+      xp: {enabled: false, points: 30}
+    item:
+      mode: CONFIG
+      base64: ''
+      material: TRIPWIRE_HOOK
+      name: '<gradient:#B883F5:#E2B3FF><bold>Epic Key</bold></gradient>'
+      lore: ['', '<dark_gray>PLEXON COLLECTION</dark_gray>', '<gray>Something extraordinary awaits.</gray>', '', '<light_purple>✦</light_purple> <gray>Epic quality</gray>']
+      glow: true
+    menu:
+      icon-slot: 14
+      claim-slot: 23
+      material: PURPLE_DYE
+      name: '<category> <white>Key</white>'
+      lore: ['', '<gray>Virtual keys</gray> <dark_gray>»</dark_gray> <white><balance></white>', '', '<gray>For the wonderfully lucky.</gray>', '<dark_gray>Claim your keys using the panel below.</dark_gray>']
+  legendary:
+    enabled: true
+    display-name: '<gradient:#FFB347:#FFE59A><bold>Legendary</bold></gradient>'
+    permission: ''
+    chances: {mining: 0.003, logging: 0.005, fishing: 0.05, mobs: 0.015}
+    announce:
+      enabled: true
+      message: '<gold>★</gold> <gradient:#FFB347:#FFE59A><bold>LEGENDARY FIND!</bold></gradient> <white><player></white> <gray>earned a <category> <gray>key while <activity>!</gray> <click:run_command:/keys><gold>[/keys]</gold></click>'
+    bonus:
+      money: {enabled: false, amount: 250.0}
+      xp: {enabled: false, points: 100}
+    item:
+      mode: CONFIG
+      base64: ''
+      material: TRIPWIRE_HOOK
+      name: '<gradient:#FFB347:#FFE59A><bold>Legendary Key</bold></gradient>'
+      lore: ['', '<dark_gray>PLEXON COLLECTION</dark_gray>', '<gray>A golden moment, just for you.</gray>', '', '<gold>★</gold> <gray>Legendary quality</gray>']
+      glow: true
+    menu:
+      icon-slot: 16
+      claim-slot: 25
+      material: ORANGE_DYE
+      name: '<category> <white>Key</white>'
+      lore: ['', '<gray>Virtual keys</gray> <dark_gray>»</dark_gray> <white><balance></white>', '', '<gray>Rare enough to make a story.</gray>', '<dark_gray>Claim your keys using the panel below.</dark_gray>']
+
+gui:
+  player:
+    title: '<gradient:#DDE5F0:#A3BEDF><bold>PLEXON</bold></gradient> <dark_gray>•</dark_gray> <gray>Your Keys</gray>'
+    size: 54
+    filler: {material: BLACK_STAINED_GLASS_PANE, name: ' ', lore: []}
+    summary:
+      slot: 4
+      material: BOOK
+      name: '<white><bold>Your collection</bold></white>'
+      lore: ['', '<gray>Total virtual keys</gray> <dark_gray>»</dark_gray> <yellow><total></yellow>', '', '<gray>Earn keys through everyday adventures.</gray>', '<gray>Bonuses are paid when you earn a key.</gray>', '<dark_gray>Claiming simply delivers the item.</dark_gray>']
+    claimable:
+      material: LIME_STAINED_GLASS_PANE
+      name: '<green><bold>Claim <category></bold></green>'
+      lore: ['', '<gray>Waiting for you</gray> <dark_gray>»</dark_gray> <white><balance></white>', '', '<green>Left-click</green> <gray>to claim this category.</gray>', '<aqua>Right-click</aqua> <gray>to claim one key.</gray>', '<dark_gray>Anything that cannot fit stays virtual.</dark_gray>']
+    empty:
+      material: GRAY_STAINED_GLASS_PANE
+      name: '<gray>No keys to claim</gray>'
+      lore: ['', '<gray>Keep exploring to find <category> <gray>keys.</gray>']
+    claim-all:
+      slot: 40
+      material: CHEST
+      name: '<gradient:#A8E6B0:#E2F5C8><bold>Claim all keys</bold></gradient>'
+      lore: ['', '<gray>Ready to claim</gray> <dark_gray>»</dark_gray> <yellow><total></yellow>', '', '<green>Click to collect every category.</green>', '<dark_gray>Keys that cannot fit stay safely virtual.</dark_gray>']
+    close: {slot: 49, material: BARRIER, name: '<red>Close</red>', lore: []}
+    admin: {slot: 45, material: COMPARATOR, name: '<gold>Administration</gold>', lore: ['<gray>Open PlexonKeys settings.</gray>']}
+  admin:
+    title: '<gold><bold>PLEXONKEYS</bold></gold> <dark_gray>•</dark_gray> <gray>Admin</gray>'
+    category-title: '<gold>Configure</gold> <dark_gray>•</dark_gray> <category>'
+    browser-title: '<gold>Configuration</gold> <dark_gray>•</dark_gray> <gray><page></gray>'
+    prompt-timeout-seconds: 120
+    # The admin menu is a fixed navigation layout. All labels below support MiniMessage.
+    filler: {material: GRAY_STAINED_GLASS_PANE, name: ' ', lore: []}
+    category: {material: TRIPWIRE_HOOK, name: '<category> <white>Settings</white>', lore: ['', '<gray>Click to configure drops, bonuses, and items.</gray>']}
+    enabled: {material: LEVER, name: '<white>Reward drops</white> <dark_gray>»</dark_gray> <yellow><value></yellow>', lore: ['<gray>Click to toggle.</gray>', '<dark_gray>Disabling drops never removes existing keys.</dark_gray>']}
+    announce: {material: BELL, name: '<white>Chat announcements</white> <dark_gray>»</dark_gray> <yellow><value></yellow>', lore: ['<gray>Click to toggle this category.</gray>']}
+    money: {material: GOLD_INGOT, name: '<white>Cash bonus</white> <dark_gray>»</dark_gray> <yellow><value></yellow>', lore: ['<gray>Left: toggle • Right: edit amount.</gray>', '<gray>Amount:</gray> <white><amount></white>', '<dark_gray>Requires Vault and an economy provider.</dark_gray>']}
+    xp: {material: EXPERIENCE_BOTTLE, name: '<white>XP bonus</white> <dark_gray>»</dark_gray> <yellow><value></yellow>', lore: ['<gray>Left: toggle • Right: edit points.</gray>', '<gray>Points:</gray> <white><amount></white>', '<dark_gray>Raw XP points, not levels.</dark_gray>']}
+    chance: {material: PAPER, name: '<white><activity></white> <dark_gray>»</dark_gray> <yellow><value>%</yellow>', lore: ['', '<gray>Click to enter a precise percentage.</gray>', '<dark_gray>0 = never • 100 = always</dark_gray>']}
+    capture: {material: HOPPER, name: '<aqua>Capture held key</aqua>', lore: ['', '<gray>Hold your real key in your main hand.</gray>', '<gray>Click to store its complete item data.</gray>', '<dark_gray>Does not consume the held item.</dark_gray>']}
+    advanced: {material: WRITABLE_BOOK, name: '<yellow>Browse all settings</yellow>', lore: ['<gray>Edit text, lists, filters, menus, and more.</gray>']}
+    save: {material: CHEST, name: '<green>Save database now</green>', lore: ['<gray>Write a manual asynchronous checkpoint.</gray>']}
+    reload: {material: CLOCK, name: '<aqua>Reload config.yml</aqua>', lore: ['<gray>Validate and apply the configuration file.</gray>']}
+    status: {material: MAP, name: '<white>System status</white>', lore: ['<gray>Players:</gray> <white><players></white>', '<gray>Tracked blocks:</gray> <white><blocks></white>', '<gray>Unsaved records:</gray> <white><dirty></white>', '<gray>Checkpoint seconds:</gray> <white><checkpoint></white>', '<gray>Economy:</gray> <white><economy></white>']}
+    section: {material: BOOK, name: '<yellow><key></yellow>', lore: ['<gray><path></gray>', '', '<aqua>Click to open this section.</aqua>']}
+    setting: {material: PAPER, name: '<white><key></white>', lore: ['<gray><path></gray>', '', '<gray>Value:</gray> <yellow><value></yellow>', '', '<aqua>Click to edit; booleans toggle directly.</aqua>']}
+    captured: {material: ENDER_CHEST, name: '<aqua>Captured NBT data</aqua>', lore: ['<gray>Use Capture held key or /keysadmin setitem.</gray>', '<dark_gray>This field is protected from text edits.</dark_gray>']}
+    back: {material: ARROW, name: '<gray>Back</gray>', lore: []}
+    previous: {material: ARROW, name: '<gray>Previous page</gray>', lore: []}
+    next: {material: ARROW, name: '<gray>Next page</gray>', lore: []}
+    close: {material: BARRIER, name: '<red>Close</red>', lore: []}
+
+messages:
+  prefix: '<dark_gray>[</dark_gray><gradient:#DDE5F0:#A3BEDF><bold>PlexonKeys</bold></gradient><dark_gray>]</dark_gray> '
+  no-permission: '<red>You do not have permission to do that.</red>'
+  players-only: '<red>This command must be used by a player.</red>'
+  earned: '<gray>You found a <category> <gray>key while <activity>!</gray> <click:run_command:/keys><yellow>[/keys]</yellow></click>'
+  bonus: '<gray>Bonus:</gray> <gold><money> cash</gold> <dark_gray>•</dark_gray> <aqua><xp> XP points</aqua>'
+  money-failed: '<yellow>Your key was awarded, but its cash bonus could not be paid. Please contact an admin.</yellow>'
+  claimed: '<green>Delivered <amount> key(s).</green> <gray><remaining> remain virtual.</gray>'
+  inventory-full: '<yellow>Your inventory has no room. Your keys remain virtual.</yellow>'
+  no-keys: '<gray>You do not have any keys to claim here yet.</gray>'
+  invalid-category: '<red>Choose basic, rare, epic, legendary, or all when claiming.</red>'
+  invalid-amount: '<red>Enter a whole number between <min> and <max>.</red>'
+  player-not-found: '<red>That player has not been recorded. Use an online name, a known name, or their UUID.</red>'
+  balance: '<white><player></white> <dark_gray>»</dark_gray> <gray>Basic <basic> • Rare <rare> • Epic <epic> • Legendary <legendary></gray>'
+  balance-changed: '<green>Updated <player>: <category> <green>balance is now <amount>.</green>'
+  item-captured: '<green>Captured the held item for <category><green>. Full item data saved; one virtual key delivers one item.</green>'
+  reloaded: '<green>Configuration validated and reloaded.</green>'
+  setting-saved: '<green>Saved</green> <white><path></white><green>.</green>'
+  config-error: '<red>Change rejected:</red> <gray><error></gray> <yellow>The last valid configuration is still active.</yellow>'
+  saving: '<gray>Saving changed balances and block records…</gray>'
+  saved: '<green>Saved <players> player records and <blocks> block changes in <time>ms.</green>'
+  save-failed: '<red>Saving failed. Changes are still in memory. Check the server log and retry before stopping.</red>'
+  prompt: '<gray>Enter a value for</gray> <white><path></white><gray> in chat. Lists use [VALUE, VALUE]. Type</gray> <yellow>cancel</yellow><gray> to exit, or two quotes to clear text.</gray>'
+  prompt-current: '<gray>Current value:</gray> <white><value></white>'
+  prompt-cancelled: '<gray>Edit cancelled.</gray>'
+  prompt-expired: '<yellow>This edit expired or the configuration changed. Open the editor again.</yellow>'
+  status: '<gray>Players: <players> • Tracked blocks: <blocks> • Unsaved records: <dirty> • Checkpoint: <checkpoint>s • Economy: <economy></gray>'
+  usage: '<gray>Use <white>/keys</white> or <white>/keys claim \<category|all></white>.</gray>'
+  admin-help: '<gold>Administration</gold><newline><gray>/keysadmin — open GUI<newline>/keysadmin setitem \<category> — copy held key<newline>/keysadmin chance \<category> \<activity> \<percent><newline>/keysadmin give|take|setbalance \<player|uuid> \<category> \<amount><newline>/keysadmin balance \<player|uuid><newline>/keysadmin set \<config.path> \<value><newline>/keysadmin reload|save|status</gray>'

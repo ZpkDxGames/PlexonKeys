@@ -1,0 +1,29 @@
+name: Build and test PlexonKeys
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+      - name: Verify Paper 26.2 plugin
+        run: mvn -B -ntp clean verify
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PlexonKeys-1.0.0
+          path: target/PlexonKeys-1.0.0.jar
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: target/surefire-reports/
