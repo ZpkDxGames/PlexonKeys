@@ -1,10 +1,19 @@
 # PlexonKeys 1.1.0
 
-Activity rewards and virtual key collection for the **Plexon** family, created for **Tonim (ZpkDxGames)**.
+Activity rewards and virtual key collection, created and maintained by **[Tonim (ZpkDxGames)](https://github.com/ZpkDxGames)** as part of the **Plexon** plugin family.
 
 **Target:** Paper **26.2**, Java **25**. Uses Paper's Adventure/MiniMessage API throughout. Not a Spigot, Folia, or legacy Minecraft build.
 
 Players earn **Basic**, **Rare**, **Epic**, and **Legendary** virtual keys from natural mining, woodcutting, successful fishing, and player mob kills. `/keys` opens a collection menu with a claim panel directly beneath each category and a separate **Claim all** button.
+
+## Downloads
+
+| Version | Release | Plugin download |
+| --- | --- | --- |
+| **1.1.0 — latest** | [Chance editor release](https://github.com/ZpkDxGames/PlexonKeys/releases/tag/v1.1.0) | [PlexonKeys-1.1.0.jar](https://github.com/ZpkDxGames/PlexonKeys/releases/download/v1.1.0/PlexonKeys-1.1.0.jar) |
+| 1.0.0 | [Initial release](https://github.com/ZpkDxGames/PlexonKeys/releases/tag/v1.0.0) | [PlexonKeys-1.0.0.jar](https://github.com/ZpkDxGames/PlexonKeys/releases/download/v1.0.0/PlexonKeys-1.0.0.jar) |
+
+Download the `.jar` asset, not GitHub's source-code ZIP. Each release includes `SHA256SUMS.txt` to verify the download. Both versions require Paper 26.2 and Java 25; install only one PlexonKeys JAR at a time.
 
 ## Install and bind your keys
 

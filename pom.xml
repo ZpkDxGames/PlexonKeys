@@ -8,6 +8,14 @@
   <name>PlexonKeys</name>
   <description>Configurable activity rewards and virtual keys for the Plexon family.</description>
   <url>https://github.com/ZpkDxGames/PlexonKeys</url>
+  <developers>
+    <developer>
+      <id>ZpkDxGames</id>
+      <name>Tonim</name>
+      <url>https://github.com/ZpkDxGames</url>
+      <roles><role>Creator</role><role>Maintainer</role></roles>
+    </developer>
+  </developers>
   <properties>
     <maven.compiler.release>25</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>

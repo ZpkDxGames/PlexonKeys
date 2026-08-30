@@ -10,7 +10,7 @@
 
 ## 1.0.0 — 2026-08-30
 
-- Initial PlexonKeys plugin for Paper 26.2 / Java 25, authored for Tonim (ZpkDxGames).
+- Initial PlexonKeys plugin for Paper 26.2 / Java 25, created by Tonim (ZpkDxGames).
 - Basic, Rare, Epic, and Legendary virtual keys from configurable mining, logging, fishing, and mob-kill activities.
 - Independent percentages per category/activity, optional highest-rarity-only mode, permissions, world filters, caps, and activity cooldowns.
 - Natural-block provenance tracking, including placements, multi-place, pistons, falling blocks, endermen, growth, formation, spread, and cleanup events.
