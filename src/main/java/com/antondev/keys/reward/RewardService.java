@@ -14,11 +14,13 @@ public final class RewardService {
     private final PlexonKeys plugin;
     private final Map<UUID, long[]> cooldowns = new HashMap<>();
     public RewardService(PlexonKeys plugin) { this.plugin = plugin; }
+
     public boolean eligible(Player player, Activity activity) {
         Settings s = plugin.settings();
         return s.enabled() && s.tasks().get(activity).enabled() && player.hasPermission("plexonkeys.earn")
                 && s.gameModes().contains(player.getGameMode()) && s.allowsWorld(player.getWorld());
     }
+
     public void perform(Player player, Activity activity) {
         if (!eligible(player, activity)) return;
         Settings s = plugin.settings();
@@ -29,24 +31,28 @@ public final class RewardService {
             if (last[activity.ordinal()] != 0 && now - last[activity.ordinal()] < cooldown) return;
             last[activity.ordinal()] = now;
         }
+
         boolean awarded = false;
         for (KeyTier tier : HIGHEST_FIRST) {
             Settings.Category category = s.categories().get(tier);
             if (!category.enabled() || (!category.permission().isBlank() && !player.hasPermission(category.permission()))) continue;
-            if (plugin.data().balance(player.getUniqueId(), tier) >= s.cap()) continue;
+            if (plugin.balances().balance(player.getUniqueId(), tier) >= s.cap()) continue;
             if (!DropRoller.wins(category.chances().get(activity), () -> ThreadLocalRandom.current().nextDouble())) continue;
-            plugin.data().remember(player.getUniqueId(), player.getName());
-            if (plugin.data().credit(player.getUniqueId(), tier, 1, s.cap()) == 0) continue;
+
+            long credited = plugin.balances().grant(player, tier, 1, "activity:" + activity.id());
+            if (credited == 0) continue;
+
             awarded = true;
-            acquired(player, activity, category, s);
+            acquired(player, activity, category, s, credited);
             if (s.highestOnly()) break;
         }
         if (awarded) plugin.menus().refreshPlayer(player);
     }
-    private void acquired(Player player, Activity activity, Settings.Category category, Settings settings) {
+
+    private void acquired(Player player, Activity activity, Settings.Category category, Settings settings, long credited) {
         TagResolver[] tags = {Text.value("player", player.getName()), Text.component("category", Text.parse(category.display())),
-                Text.value("activity", settings.tasks().get(activity).display()), Text.value("amount", 1),
-                Text.value("balance", plugin.data().balance(player.getUniqueId(), category.tier()))};
+                Text.value("activity", settings.tasks().get(activity).display()), Text.value("amount", credited),
+                Text.value("balance", plugin.balances().balance(player.getUniqueId(), category.tier()))};
         if (settings.yaml().getBoolean("notifications.personal-chat")) settings.text().send(player, "earned", tags);
         if (category.announce()) Bukkit.broadcast(Text.parse(category.announcement(), tags));
         int xp = category.xpEnabled() ? category.xp() : 0;
@@ -61,6 +67,7 @@ public final class RewardService {
         if (!sound.isBlank()) player.playSound(player.getLocation(), sound, SoundCategory.MASTER,
                 (float) settings.yaml().getDouble("notifications.sound-volume"), (float) settings.yaml().getDouble("notifications.sound-pitch"));
     }
+
     public void forget(UUID player) { cooldowns.remove(player); }
     public void clearCooldowns() { cooldowns.clear(); }
 }
