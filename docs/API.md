@@ -39,9 +39,9 @@ boolean isTierEnabled(KeyTier tier);
 
 `balances` returns an immutable map. `keyTemplate` returns a defensive `ItemStack` copy.
 
-`grant` enforces the configured per-tier virtual balance cap and returns the amount actually credited. `take` never lowers a balance below zero and returns the amount actually removed. Invalid or non-positive mutation amounts are rejected.
+`grant` enforces the configured per-tier virtual balance cap and returns the amount actually credited. To preserve the post-success earned-event contract, `grant` requires the target player to be online; an offline target is rejected before mutation. `take` can operate on a known UUID, never lowers a balance below zero, and returns the amount actually removed. Invalid or non-positive mutation amounts are rejected.
 
-Offline UUID balances remain addressable. Public Bukkit earned events require an online `Player`; therefore an offline API/admin balance mutation is persisted but cannot produce a `PlayerEvent` until there is an online player object. Normal activity earning and claiming are online by definition and always publish their successful event contracts.
+Balance reads remain UUID-based. Normal activity earning and claiming are online by definition and always publish their successful event contracts. Administrative corrections may still operate on known offline accounts because `take`/`setbalance` do not represent earning events.
 
 ## KeySource
 
