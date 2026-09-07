@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.2.0 — 2026-09-07
+
+- Adopted PlexonCore 1.0.0 as an optional Core-native integration while preserving standalone operation when Core is absent, disabled, incompatible, or unavailable through Bukkit services.
+- Added Core module registration under module ID `keys`, lifecycle health publishing, `PLEXON_KEYS` integration capabilities, clean unregistration, and `/keysadmin diagnostics`.
+- Added the stable Bukkit `PlexonKeysAPI` service for balance reads, capped grants, removals, tier state, and defensive physical key-template access.
+- Added `KeySource` for stable acquisition metadata and documented the 1.2.x primary-thread API contract.
+- Added `com.antondev.keys.event.PlexonKeyEarnedEvent` with post-success, actual-credit semantics and non-empty event IDs.
+- Added `com.antondev.keys.event.PlexonKeyClaimedEvent` with post-delivery semantics, one event per delivered tier, shared parent claim transaction IDs, and unique per-tier event IDs.
+- Centralized virtual balance mutations through a domain service so activity/API/admin grants, removals, claim debits, corrections, and silent rollback recovery use explicit event policies.
+- Wired activity earning sources as `activity:mining`, `activity:logging`, `activity:fishing`, and `activity:mobs`; normal physical claims publish `player-claim`.
+- Preserved failed-claim recovery as a silent balance restoration so a rollback cannot create false PlexonQuests progress.
+- Hardened listener-failure isolation so external event-listener exceptions cannot undo completed credits/deliveries or duplicate physical keys.
+- Added reflection-contract and behavior coverage for the public API/events, standalone startup, cap handling, silent recovery, claim-all IDs, defensive API results, and service unregistration.
+- Modernized CI for Java 25 with pinned/verified PlexonCore 1.0.0 provisioning, Maven verification, installable-JAR checks, Core-class exclusion, and SHA-256 generation.
+- Replaced the legacy main-push release mechanism with a tag-driven workflow that rebuilds and verifies the exact release tag before publishing `PlexonKeys-1.2.0.jar` and `SHA256SUMS.txt`.
+- Added API, PlexonCore ownership/lifecycle, and 1.1.0 → 1.2.0 migration/staging documentation.
+- Preserved the existing configuration layout, `plexonkeys.db`, balances, tracked-block state, activity probabilities, reward progression, GUIs, and complete captured physical key ItemStacks.
+
 ## 1.1.0 — 2026-08-30
 
 - Added a chance overview for all 16 category/activity pairs through `/keysadmin chances` and the main admin GUI.
