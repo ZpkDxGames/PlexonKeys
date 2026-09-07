@@ -2,9 +2,9 @@
 
 Activity-driven virtual keys and safe physical key claiming for Paper 26.2, created and maintained by **Tonim (ZpkDxGames)** as part of the Plexon plugin family.
 
-**Runtime:** Paper **26.2**, Java **25**  
-**PlexonCore:** optional runtime integration with **PlexonCore 1.0.0 / Core API 1.x**  
-**Storage:** `plugins/PlexonKeys/plexonkeys.db`  
+**Runtime:** Paper **26.2**, Java **25**
+**PlexonCore:** optional runtime integration with **PlexonCore 1.0.0 / Core API 1.x**
+**Storage:** `plugins/PlexonKeys/plexonkeys.db`
 **Key tiers:** Basic, Rare, Epic, Legendary
 
 PlexonKeys awards virtual keys from eligible natural gameplay activity, stores balances in SQLite, and lets players safely claim complete physical key ItemStacks through `/keys`. Version 1.2.0 keeps the existing key engine intact while adding PlexonCore module visibility, a stable public Bukkit API, and native public events consumed by PlexonQuests 3.1.0.
