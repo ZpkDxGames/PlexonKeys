@@ -5,7 +5,7 @@ api-version: '26.2'
 description: Activity rewards, virtual keys, and complete admin customization for Plexon.
 author: Tonim (ZpkDxGames)
 website: https://github.com/ZpkDxGames/PlexonKeys
-softdepend: [Vault]
+softdepend: [PlexonCore, Vault]
 commands:
   keys:
     description: Open your virtual key collection.
