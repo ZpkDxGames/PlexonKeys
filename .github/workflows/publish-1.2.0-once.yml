@@ -1,0 +1,82 @@
+name: Publish PlexonKeys 1.2.0 Once
+
+on:
+  push:
+    branches:
+      - release/1.2.0
+    paths:
+      - .github/workflows/publish-1.2.0-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      - name: Provision PlexonCore 1.0.0 API
+        shell: bash
+        run: |
+          set -euo pipefail
+          core_jar="${RUNNER_TEMP}/PlexonCore-1.0.0.jar"
+          curl --fail --location --silent --show-error \
+            --output "${core_jar}" \
+            "https://github.com/ZpkDxGames/PlexonCore/releases/download/v1.0.0/PlexonCore-1.0.0.jar"
+          echo "4abce6de93293e21b31cb874734430d5bdc77de17a4c3b98fd6a9006e1f13018  ${core_jar}" | sha256sum --check
+          mvn -B -ntp org.apache.maven.plugins:maven-install-plugin:3.1.4:install-file \
+            -Dfile="${core_jar}" \
+            -DgroupId=com.zpkdxgames \
+            -DartifactId=PlexonCore \
+            -Dversion=1.0.0 \
+            -Dpackaging=jar \
+            -DgeneratePom=true
+
+      - name: Test and package release
+        run: mvn -B -ntp clean verify
+
+      - name: Verify distribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t jars < <(find target -maxdepth 1 -type f -name 'PlexonKeys-*.jar' -print)
+          test "${#jars[@]}" -eq 1
+          jar_path=${jars[0]}
+          test -s "${jar_path}"
+          jar tf "${jar_path}" > target/jar-contents.txt
+          grep -qx 'plugin.yml' target/jar-contents.txt
+          grep -qx 'com/antondev/keys/PlexonKeys.class' target/jar-contents.txt
+          grep -qx 'com/antondev/keys/api/PlexonKeysAPI.class' target/jar-contents.txt
+          grep -qx 'com/antondev/keys/event/PlexonKeyEarnedEvent.class' target/jar-contents.txt
+          grep -qx 'com/antondev/keys/event/PlexonKeyClaimedEvent.class' target/jar-contents.txt
+          grep -qx 'org/sqlite/JDBC.class' target/jar-contents.txt
+          if grep -q '^com/zpkdxgames/plexoncore/' target/jar-contents.txt; then
+            echo "PlexonCore runtime classes must not be shaded into PlexonKeys" >&2
+            exit 1
+          fi
+          jar_name=$(basename "${jar_path}")
+          cd target
+          sha256sum "${jar_name}" > SHA256SUMS.txt
+          sha256sum --check SHA256SUMS.txt
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view v1.2.0 >/dev/null 2>&1; then
+            echo "Release v1.2.0 already exists; leaving it unchanged."
+            exit 0
+          fi
+          gh release create v1.2.0 \
+            target/PlexonKeys-1.2.0.jar \
+            target/SHA256SUMS.txt \
+            --target "${GITHUB_SHA}" \
+            --title "PlexonKeys 1.2.0" \
+            --generate-notes
