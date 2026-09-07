@@ -8,6 +8,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import org.bukkit.Bukkit;
+import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 
 /** Internal implementation registered through Bukkit ServicesManager. */
@@ -32,7 +33,13 @@ public final class PlexonKeysApiImpl implements PlexonKeysAPI {
 
     @Override public long grant(UUID playerId, KeyTier tier, long amount, KeySource source) {
         requirePrimaryThread();
-        return balances.grant(playerId, tier, amount, source);
+        UUID id = Objects.requireNonNull(playerId, "playerId");
+        KeySource keySource = Objects.requireNonNull(source, "source");
+        Player player = Bukkit.getPlayer(id);
+        if (player == null) {
+            throw new IllegalStateException("PlexonKeysAPI.grant requires an online player so the earned-event contract can be fulfilled");
+        }
+        return balances.grant(player, tier, amount, keySource.id());
     }
 
     @Override public long take(UUID playerId, KeyTier tier, long amount, KeySource source) {
