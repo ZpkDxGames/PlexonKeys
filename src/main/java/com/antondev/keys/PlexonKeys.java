@@ -237,6 +237,7 @@ public class PlexonKeys extends JavaPlugin implements Listener {
         boolean apiRegistered = Bukkit.getServicesManager().getRegistration(PlexonKeysAPI.class) != null;
         DataSaver.Metrics storage = saver == null ? null : saver.metrics();
         RewardService.Metrics reward = rewards.metrics();
+        MemoryStore.ProvenanceMetrics provenance = data.provenanceMetrics();
         sender.sendMessage("§8§m----------------------------------------");
         sender.sendMessage("§6PlexonKeys diagnostics");
         sender.sendMessage("§7Version: §f" + getPluginMeta().getVersion());
@@ -249,6 +250,9 @@ public class PlexonKeys extends JavaPlugin implements Listener {
         sender.sendMessage("§7SQLite: §f" + (saver == null ? "UNAVAILABLE" : "READY"));
         sender.sendMessage("§7Players / tracked blocks: §f" + data.playerCount() + " / " + data.blockCount());
         sender.sendMessage("§7Dirty accounts / blocks: §f" + data.dirtyAccounts() + " / " + data.dirtyBlocks());
+        sender.sendMessage("§7Provenance worlds / largest batch: §f" + provenance.perWorld().size() + " / " + provenance.largestBatch());
+        sender.sendMessage("§7Provenance mark / unmark / move per sec: §f" + rate(provenance.marksPerSecond())
+                + " / " + rate(provenance.unmarksPerSecond()) + " / " + rate(provenance.movesPerSecond()));
         sender.sendMessage("§7Checkpoint seconds: §f" + settings().checkpointSeconds());
         sender.sendMessage("§7Vault economy: §f" + economy.name());
         sender.sendMessage("§7PlexonKeysAPI: §f" + (apiRegistered ? "REGISTERED" : "UNAVAILABLE"));
