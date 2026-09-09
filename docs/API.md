@@ -1,6 +1,10 @@
-# PlexonKeys 1.2.0 Public API
+# PlexonKeys 1.3.0 Public API
 
-PlexonKeys 1.2.0 exposes a stable Bukkit service API and post-success Bukkit events without exposing `MemoryStore` or SQLite internals.
+PlexonKeys 1.3.0 preserves the stable Bukkit service API and post-success Bukkit events introduced in 1.2.0. Integrations do not need access to `MemoryStore`, SQLite internals, GUI configuration, or persistence implementation details.
+
+## Compatibility
+
+The **1.2.x method and event surface is intentionally unchanged in 1.3.x**. Existing PlexonCrates/PlexonQuests integrations can continue using the same class names and accessors.
 
 ## Lookup
 
@@ -22,9 +26,9 @@ com.antondev.keys.api.PlexonKeysAPI
 
 ## Threading contract
 
-All `PlexonKeysAPI` methods in the 1.2.x line must be called on the primary server thread. Calls from another thread fail with `IllegalStateException`.
+All `PlexonKeysAPI` methods in the 1.3.x line must be called on the primary server thread. Calls from another thread fail with `IllegalStateException`.
 
-This rule keeps Bukkit inventory/item access and public event delivery deterministic. Plugins doing asynchronous work should schedule the PlexonKeys API call back onto the primary thread.
+This keeps Bukkit inventory/item access, balance mutation, and public event delivery deterministic. Plugins doing asynchronous work should schedule the PlexonKeys API call back onto the primary thread.
 
 ## API surface
 
@@ -37,11 +41,13 @@ Optional<ItemStack> keyTemplate(KeyTier tier);
 boolean isTierEnabled(KeyTier tier);
 ```
 
-`balances` returns an immutable map. `keyTemplate` returns a defensive `ItemStack` copy.
+`balances` returns an immutable map. `keyTemplate` returns a defensive `ItemStack` copy preserving the configured/captured Paper item data.
 
-`grant` enforces the configured per-tier virtual balance cap and returns the amount actually credited. To preserve the post-success earned-event contract, `grant` requires the target player to be online; an offline target is rejected before mutation. `take` can operate on a known UUID, never lowers a balance below zero, and returns the amount actually removed. Invalid or non-positive mutation amounts are rejected.
+`grant` enforces the configured per-tier virtual balance cap and returns the amount actually credited. To preserve the post-success earned-event contract, `grant` requires the target player to be online; an offline target is rejected before mutation.
 
-Balance reads remain UUID-based. Normal activity earning and claiming are online by definition and always publish their successful event contracts. Administrative corrections may still operate on known offline accounts because `take`/`setbalance` do not represent earning events.
+`take` never lowers a balance below zero and returns the amount actually removed. Invalid or non-positive mutation amounts are rejected.
+
+1.3.0 internally performs balance mutations in a single authoritative account pass where possible; this is an implementation optimization and does not change public semantics.
 
 ## KeySource
 
@@ -56,7 +62,7 @@ DAILY_REWARD
 OTHER
 ```
 
-The machine-readable IDs are lower-case. Built-in activity rewards use the more specific source strings:
+Machine-readable IDs are lower-case. Built-in activity rewards use:
 
 ```text
 activity:mining
@@ -73,7 +79,7 @@ Exact class:
 com.antondev.keys.event.PlexonKeyEarnedEvent
 ```
 
-This is a non-cancellable, post-success event. It fires only after the virtual balance actually increases. `amount` is the actual credited amount after cap enforcement.
+This is a non-cancellable, synchronous, post-success event. It fires only after the virtual balance actually increases. `amount` is the actual credited amount after cap enforcement.
 
 Compatibility accessors include:
 
@@ -99,7 +105,7 @@ Exact class:
 com.antondev.keys.event.PlexonKeyClaimedEvent
 ```
 
-This is a non-cancellable, post-success event. It fires only after the virtual debit and physical inventory delivery have both committed.
+This is a non-cancellable, synchronous, post-success event. It fires only after both the virtual debit and physical inventory delivery have committed.
 
 Compatibility accessors include:
 
@@ -130,15 +136,21 @@ One claim operation creates one parent UUID transaction ID. Each delivered tier 
 <transactionId>:legendary
 ```
 
-If Basic x3, Rare x2 and Epic x1 are delivered in one operation, PlexonKeys fires three claimed events with the same parent transaction ID and unique per-tier event IDs. Amounts always match the quantities actually delivered.
+If Basic x3, Rare x2, and Epic x1 are delivered in one operation, PlexonKeys fires three claimed events with the same parent transaction ID and unique per-tier event IDs. Amounts always match quantities actually delivered.
 
 ## Event failure isolation
 
-Earned events are published only after the balance commit. Claimed events are published only after the inventory delivery commit. If another plugin's listener throws, PlexonKeys logs the listener failure but does not undo committed state, duplicate keys, or restore already-delivered balances.
+Earned events are published only after balance commit. Claimed events are published only after inventory delivery commit. If another plugin listener throws, PlexonKeys logs the listener failure but does not undo committed state, duplicate physical keys, or restore already-delivered balances.
 
-## PlexonQuests 3.1.0
+## Physical template identity
 
-PlexonQuests discovers the two event classes reflectively. A successful Basic mining acquisition reaches Quests approximately as:
+`keyTemplate(KeyTier)` exposes the authoritative configured/captured template as a defensive copy. PlexonKeys does not intentionally reduce an external key to a material/name/lore triple. Captured Paper item metadata/data components remain part of the template.
+
+This is the supported integration path for PlexonCrates-style consumers that need an exact physical key template. Consumers should not parse PlexonKeys GUI/config internals.
+
+## PlexonQuests integration
+
+PlexonQuests can discover the two event classes reflectively. A successful Basic mining acquisition is exposed approximately as:
 
 ```text
 key.category = basic
@@ -146,7 +158,7 @@ key.source   = activity:mining
 amount       = 1
 ```
 
-A successful physical claim reaches Quests approximately as:
+A successful physical claim is exposed approximately as:
 
 ```text
 key.category = basic
@@ -154,4 +166,4 @@ key.source   = player-claim
 amount       = actual delivered count
 ```
 
-Quests uses the non-empty event ID as its durable integration deduplication token.
+The non-empty event ID is suitable as the integration deduplication token. Event allocation/dispatch occurs only for authoritative successful mutations; failed awards and failed claims do not emit progress events.
