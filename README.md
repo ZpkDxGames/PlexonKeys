@@ -1,30 +1,102 @@
-# PlexonKeys 1.2.0
+# PlexonKeys 1.3.0
 
 Activity-driven virtual keys and safe physical key claiming for Paper 26.2, created and maintained by **Tonim (ZpkDxGames)** as part of the Plexon plugin family.
 
-**Runtime:** Paper **26.2**, Java **25**
-**PlexonCore:** optional runtime integration with **PlexonCore 1.0.0 / Core API 1.x**
-**Storage:** `plugins/PlexonKeys/plexonkeys.db`
+**Runtime:** Paper **26.2**, Java **25**  
+**PlexonCore:** optional runtime integration with **PlexonCore 1.0.0 / Core API 1.x**  
+**Storage:** `plugins/PlexonKeys/plexonkeys.db`  
 **Key tiers:** Basic, Rare, Epic, Legendary
 
-PlexonKeys awards virtual keys from eligible natural gameplay activity, stores balances in SQLite, and lets players safely claim complete physical key ItemStacks through `/keys`. Version 1.2.0 keeps the existing key engine intact while adding PlexonCore module visibility, a stable public Bukkit API, and native public events consumed by PlexonQuests 3.1.0.
+PlexonKeys awards virtual keys from eligible natural gameplay activity, stores exact balances/provenance in SQLite, and lets players claim complete physical key `ItemStack`s through `/keys`.
 
-## 1.2.0 migration goals
+Version **1.3.0** is a performance/reliability release. It keeps the 1.2.0 public API/events, existing database, configuration model, probabilities, anti-abuse rules, and physical key identity while reducing work on high-volume activity, provenance, save, claim, and GUI paths.
 
-PlexonKeys 1.2.0 is deliberately incremental:
+## 1.3.0 focus
 
 ```text
-PlexonCore adoption
-+ stable public API/events
-+ PlexonQuests interoperability
-+ build/release hardening
+single-pass reward eligibility
++ precomputed reward runtime
++ batched provenance mutations
++ atomic balance mutations
++ bounded/coalesced SQLite saves
++ bounded dirty snapshots
++ lower claim allocation pressure
++ coalesced open-menu refreshes
++ richer storage diagnostics
 ```
 
-It does **not** rebalance key chances, replace SQLite, regenerate configuration, redesign the GUI, or change captured physical keys.
+This release intentionally does **not** rebalance gameplay or reset data.
+
+## Performance architecture
+
+### Activity rewards
+
+High-frequency listeners return before reward work whenever event-local requirements fail. The authoritative reward service then performs permission/world/game-mode/activity eligibility once, rather than repeating it in both the listener and reward service.
+
+Configuration-derived roll data is prepared per configuration revision:
+
+- enabled activity state;
+- cooldown duration in nanoseconds;
+- enabled tier candidates in highest-first order;
+- fixed-precision chance thresholds;
+- category display components;
+- notification/sound settings.
+
+A reward credit replaces one authoritative account record once and returns its committed post-credit balance, avoiding a second synchronized balance lookup for message rendering.
+
+### Artificial-block provenance
+
+Player-placed/artificial provenance remains authoritative. Multi-place, growth/fertilization, piston, explosion, and other grouped changes use batch store operations rather than repeating bookkeeping boundaries for every position.
+
+Piston movement snapshots source provenance before mutation so adjacent moved blocks cannot overwrite one another's provenance state.
+
+No world scans and no per-block SQLite writes are introduced.
+
+### Persistence
+
+PlexonKeys keeps one SQLite worker. Save requests are revision-coalesced, and executor queue growth is bounded: repeated checkpoints extend the requested revision instead of creating an arbitrary queue of database tasks.
+
+Dirty state is handed to SQLite in bounded immutable snapshots. Exact version acknowledgement means:
+
+- mutations newer than a snapshot remain dirty;
+- a failed save remains dirty and retryable;
+- a database slowdown cannot grow an unbounded executor queue;
+- JDBC remains off the gameplay event thread.
+
+New-install defaults:
+
+```yaml
+storage:
+  checkpoint-seconds: 60
+  pressure-dirty-threshold: 2048
+  maximum-snapshot-records: 4096
+  shutdown-timeout-seconds: 15
+
+performance:
+  menu-refresh-ticks: 2
+```
+
+Existing `config.yml` files are not overwritten. In particular, an existing explicit `checkpoint-seconds: 0` remains shutdown-only unless an administrator changes it.
+
+`pressure-dirty-threshold` requests an early **coalesced** save after large provenance bursts. It does not execute JDBC from the event listener.
+
+### Claims
+
+Claims preserve rollback safety while reducing allocation:
+
+```text
+read balances once
+-> plan stack delivery with copy-on-write inventory slots
+-> atomically debit all delivered tiers in one account mutation
+-> write physical ItemStacks
+-> publish claim events only after success
+```
+
+If inventory delivery throws after debit, all debited tiers are restored in one authoritative account mutation and the previous inventory contents are restored where possible.
 
 ## PlexonCore modes
 
-`PlexonCore` is a soft dependency.
+`PlexonCore` remains a soft dependency.
 
 ```text
 PlexonCore present + compatible -> CORE
@@ -37,31 +109,29 @@ Supported Core API range:
 >=1.0 <2.0
 ```
 
-In Core mode, PlexonKeys registers module ID `keys`, publishes lifecycle health/capabilities, and exposes `PLEXON_KEYS` ecosystem integration state. In standalone mode, the key engine, SQLite storage, commands, public API, and public events remain available without Core classloading failures.
+In Core mode, PlexonKeys registers module ID `keys` and publishes lifecycle/integration health. In standalone mode, the key engine, SQLite storage, commands, public API, and public events remain available.
 
 Core integration details: [`docs/PLEXONCORE.md`](docs/PLEXONCORE.md)
 
 ## Existing gameplay preserved
 
-Players can continue to earn and claim:
+Players continue to receive configurable rewards from:
 
-- Basic, Rare, Epic, and Legendary virtual keys;
-- mining rewards from eligible natural blocks;
-- logging rewards;
-- fishing rewards;
-- mob-kill rewards;
-- per-activity cooldowns;
+- mining natural eligible blocks;
+- logging;
+- fishing;
+- mob kills;
 - independent or highest-tier-only rolls;
-- configurable virtual balance caps;
-- XP bonuses;
-- optional Vault money bonuses;
-- chat/announcement/sound feedback.
+- per-activity cooldowns;
+- category permissions;
+- world/game-mode restrictions;
+- XP and optional Vault money bonuses.
 
-Natural-block provenance tracking continues to prevent player-placed blocks from becoming renewable key-farming sources. Existing world filters, allowed game modes, permissions, material lists, spawn-reason rules, cooldowns, and probabilities remain configuration-driven.
+Natural/artificial block tracking, preferred-tool/drop requirements, material filters, spawn-reason filters, balance caps, and exact virtual balances remain enforced.
 
 ## Physical key compatibility
 
-PlexonKeys stores complete captured Paper `ItemStack` data for physical keys. It does not reduce custom/external keys to only material, name, and lore.
+PlexonKeys stores complete captured Paper `ItemStack` data for physical keys. It does not reduce third-party keys to material/name/lore matching.
 
 Use:
 
@@ -72,35 +142,19 @@ Use:
 /keysadmin setitem legendary
 ```
 
-while holding the real key item supplied by the crate/plugin integration you use.
+while holding the real key item supplied by the crate integration.
 
-Captured item templates preserve supported Paper item metadata/data components. The external crate plugin remains responsible for recognizing and redeeming the resulting item.
-
-## Safe claim model
-
-Claims remain inventory-aware and transactional at the PlexonKeys domain level:
-
-```text
-calculate delivery plan
--> respect storage capacity
--> debit only deliverable virtual quantities
--> write physical ItemStacks
--> publish claim events after success
-```
-
-If the inventory write fails, PlexonKeys silently restores the virtual debit and attempts to restore the previous inventory contents. That restoration does not emit a false earned event.
-
-Claim-all emits one successful public event for each tier actually delivered. All events from the same claim operation share one parent transaction ID while keeping unique per-tier event IDs.
+Captured item templates preserve supported Paper item metadata/data components. `PlexonKeysAPI.keyTemplate(...)` returns a defensive copy.
 
 ## Public API
 
-PlexonKeys 1.2.0 registers this Bukkit service:
+The stable Bukkit service remains:
 
 ```text
 com.antondev.keys.api.PlexonKeysAPI
 ```
 
-Core operations:
+The **1.2.x method surface is preserved in 1.3.x**:
 
 ```java
 long balance(UUID playerId, KeyTier tier);
@@ -111,24 +165,22 @@ Optional<ItemStack> keyTemplate(KeyTier tier);
 boolean isTierEnabled(KeyTier tier);
 ```
 
-The 1.2.x API requires the primary server thread. Balance-map results are immutable and physical template results are defensive copies.
+The 1.3.x API requires the primary server thread. Balance-map results are immutable and template results are defensive copies.
 
-Full API contract: [`docs/API.md`](docs/API.md)
+Full contract: [`docs/API.md`](docs/API.md)
 
 ## Public events
 
-Exact public classes:
+Stable exact classes:
 
 ```text
 com.antondev.keys.event.PlexonKeyEarnedEvent
 com.antondev.keys.event.PlexonKeyClaimedEvent
 ```
 
-### Earned event
+`PlexonKeyEarnedEvent` fires only after a positive committed balance increase and reports the actual credited amount after cap enforcement.
 
-`PlexonKeyEarnedEvent` is post-success. It fires only after the virtual balance actually increases and reports the actual credited amount after cap enforcement.
-
-Built-in activity source IDs:
+Built-in sources:
 
 ```text
 activity:mining
@@ -137,50 +189,9 @@ activity:fishing
 activity:mobs
 ```
 
-It does not fire for rejected chance rolls, disabled tiers, permission rejection, cap rejection, zero credit, database loading, checkpoints, corrections, claim debit, or claim rollback restoration.
+`PlexonKeyClaimedEvent` fires only after both virtual debit and physical delivery commit. Normal claims use source `player-claim`. Claim-all preserves one event per delivered tier, one parent transaction ID, and unique per-tier event IDs.
 
-### Claimed event
-
-`PlexonKeyClaimedEvent` is post-success. It fires only after the virtual debit and physical inventory write both commit.
-
-Normal source:
-
-```text
-player-claim
-```
-
-For a claim-all transaction such as:
-
-```text
-Basic x3
-Rare x2
-Epic x1
-```
-
-PlexonKeys publishes three events with one shared transaction UUID and IDs equivalent to:
-
-```text
-<transaction>:basic
-<transaction>:rare
-<transaction>:epic
-```
-
-## PlexonQuests 3.1.0
-
-PlexonQuests discovers the two public event classes directly. A healthy staged ecosystem should report:
-
-```text
-PLEXON_KEYS AVAILABLE
-```
-
-and support native progression for:
-
-```text
-PLEXON_KEY_EARN
-PLEXON_KEY_CLAIM
-```
-
-No lore parsing or command scraping is required.
+This contract remains compatible with PlexonQuests' event integration and PlexonCrates' public service/template integration.
 
 ## Player commands
 
@@ -191,7 +202,7 @@ No lore parsing or command scraping is required.
 | `/keys claim all` | Claim all deliverable tiers |
 | `/plexonkeys` | Alias for `/keys` |
 
-Players need `plexonkeys.use` to use the collection/claim system and `plexonkeys.earn` to earn activity keys.
+Players need `plexonkeys.use` for collection/claim actions and `plexonkeys.earn` for activity earning.
 
 ## Admin commands
 
@@ -200,7 +211,7 @@ Players need `plexonkeys.use` to use the collection/claim system and `plexonkeys
 | `/keysadmin` | Open the admin GUI |
 | `/keysadmin chances [category] [activity]` | Open chance-management GUI |
 | `/keysadmin setitem <category>` | Capture the complete held physical key |
-| `/keysadmin chance <category> <activity> <percent>` | Set a precise activity chance |
+| `/keysadmin chance <category> <activity> <percent>` | Set an exact activity chance |
 | `/keysadmin give <player|uuid> <category> <amount>` | Grant virtual keys up to the cap |
 | `/keysadmin take <player|uuid> <category> <amount>` | Remove virtual keys |
 | `/keysadmin setbalance <player|uuid> <category> <amount>` | Correct an exact balance |
@@ -211,87 +222,72 @@ Players need `plexonkeys.use` to use the collection/claim system and `plexonkeys
 | `/keysadmin status` | Show compact runtime status |
 | `/keysadmin diagnostics` | Show Core/API/storage/event diagnostics |
 
-Administrative `give` uses `admin` acquisition metadata. `take` and `setbalance` are correction/removal operations and do not emit earned events.
-
 ## Diagnostics
 
-Useful staging commands:
+`/keysadmin diagnostics` includes:
 
-```text
-/plexon modules
-/plexon integrations
-/plexon diagnostics
-/quests diagnostics
-/quests validate
-/keys
-/keysadmin diagnostics
+- plugin/Paper/Java version;
+- cached players and tracked artificial positions;
+- dirty account and block counts;
+- checkpoint interval;
+- database save in-flight/requested state;
+- requested and acknowledged revisions;
+- last snapshot, database, and total-save timing;
+- last saved account/block row counts;
+- save failure count;
+- Vault/Core/API state.
+
+This is intended to make obvious persistence pressure visible without requiring continuous file logging.
+
+## Upgrade from 1.2.0
+
+1. Stop the server normally.
+2. Back up `plugins/PlexonKeys/`.
+3. Replace the old JAR with `PlexonKeys-1.3.0.jar`.
+4. Keep the existing `config.yml` and `plexonkeys.db`.
+5. Start Paper 26.2 on Java 25.
+6. Run `/keysadmin diagnostics`.
+7. Verify PlexonCrates/PlexonQuests staging behavior.
+8. Run the Spark/stress scenarios before production rollout.
+
+No database reset or configuration deletion is required.
+
+## Build and distribution
+
+Run:
+
+```bash
+mvn clean verify
 ```
 
-Expected Core-enabled state after a successful staged migration:
+Expected artifact:
 
 ```text
-PlexonQuests — READY
-PlexonRanks  — READY
-PlexonKeys   — READY
-
-PLEXON_KEYS AVAILABLE
+PlexonKeys-1.3.0.jar
+SHA256SUMS.txt
 ```
 
-If configured cash bonuses have no usable Vault economy provider, PlexonKeys may report `DEGRADED` while the core key gameplay remains operational.
+CI provisions the pinned PlexonCore 1.0.0 API, runs the Java 25 Maven verification suite, verifies required runtime/API/event classes inside the shaded JAR, rejects accidentally shaded PlexonCore runtime classes, asserts the exact 1.3.0 filename, and generates/verifies SHA-256.
 
-## Storage and data safety
+The tag workflow additionally requires the Git tag to equal the Maven project version before it can publish the JAR/checksum.
 
-PlexonKeys continues to own:
+## Stable-release validation
 
-```text
-plugins/PlexonKeys/
-└── plexonkeys.db
-```
+Automated CI cannot substitute for a real Paper workload. Before creating/publishing `v1.3.0`, run at minimum:
 
-Runtime data continues through the existing `SqliteStore`, `MemoryStore`, and `DataSaver` design. Version 1.2.0 does not merge the database into PlexonCore and does not require a schema-reset migration.
+- baseline and post-change Spark profiles;
+- idle profile;
+- 10-player rapid natural mining;
+- player-placed block abuse workload;
+- piston provenance stress;
+- large explosions;
+- mob-farm and fishing throughput;
+- concurrent/bulk claim bursts;
+- checkpoint pressure after thousands of provenance mutations;
+- PlexonCrates/PlexonQuests staging;
+- a mixed 30-minute soak with heap/dirty/save-worker observation.
 
-For an upgrade from 1.1.0:
-
-1. stop the server;
-2. back up `plugins/PlexonKeys/`;
-3. remove the old PlexonKeys JAR;
-4. install `PlexonKeys-1.2.0.jar`;
-5. keep `config.yml`, `plexonkeys.db`, and the rest of the data folder;
-6. start the server and run the diagnostics above.
-
-Full staging/rollback guide: [`docs/MIGRATION_1.2.0.md`](docs/MIGRATION_1.2.0.md)
-
-## Configuration compatibility
-
-The existing 1.1.0 configuration model and paths remain authoritative. Existing server administrators do not need to delete `config.yml` to use 1.2.0.
-
-Key probabilities, cooldowns, economy rewards, XP rewards, world filters, tracking behavior, category enablement, permissions, GUI layout, messages, announcements, and physical templates remain owned by the existing configuration layer.
-
-## Vault
-
-Vault remains optional and is not replaced by PlexonCore. If cash bonuses are enabled, a compatible Vault economy provider is required for the money portion of the reward. Key acquisition and XP remain committed even when a configured cash deposit fails; uncertain external economy writes are not replayed automatically.
-
-## Build
-
-The 1.2.0 Maven build targets Java 25 and Paper 26.2. PlexonCore 1.0.0 is compile-time `provided` only.
-
-CI:
-
-1. downloads the official `PlexonCore-1.0.0.jar` release asset;
-2. verifies its pinned SHA-256;
-3. installs it to the CI-local Maven repository;
-4. runs `mvn -B -ntp clean verify`;
-5. verifies the installable JAR contains `plugin.yml`, the main class, SQLite JDBC, `PlexonKeysAPI`, and both key event classes;
-6. rejects a distribution containing `com/zpkdxgames/plexoncore/` runtime classes;
-7. generates and verifies `SHA256SUMS.txt`.
-
-The release workflow runs only for version tags such as `v1.2.0`, rebuilds the exact tag, repeats distribution verification, and publishes the JAR plus checksum.
-
-## Release validation
-
-The automated suite covers the existing reward/config/storage/GUI behavior plus the 1.2.0 public API/event migration contract. Automated CI is not a replacement for a real Paper staging server with PlexonCore 1.0.0 and PlexonQuests 3.1.0.
-
-Do not publish/deploy the production tag until the staging checklist in `docs/MIGRATION_1.2.0.md` passes.
+Do not publish the stable tag merely because unit/CI verification passes.
 
 ## License / authorship
 
