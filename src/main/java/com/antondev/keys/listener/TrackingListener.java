@@ -32,9 +32,10 @@ public final class TrackingListener implements Listener {
         if (event instanceof BlockMultiPlaceEvent multi) {
             ArrayList<Position> positions = new ArrayList<>(multi.getReplacedBlockStates().size());
             for (BlockState state : multi.getReplacedBlockStates()) positions.add(position(state.getBlock()));
-            plugin.data().markAll(positions);
+            plugin.pressureSaveProbe(plugin.data().markAll(positions));
         } else {
             plugin.data().mark(position(event.getBlockPlaced()));
+            plugin.pressureSaveProbe(1);
         }
     }
 
@@ -55,8 +56,13 @@ public final class TrackingListener implements Listener {
             if (block.getPistonMoveReaction() == PistonMoveReaction.BREAK) removed.add(source);
             else moves.put(source, position(block.getRelative(direction)));
         }
-        if (!removed.isEmpty()) plugin.data().unmarkAll(removed);
-        if (!moves.isEmpty()) plugin.data().move(moves);
+        int mutations = 0;
+        if (!removed.isEmpty()) mutations += plugin.data().unmarkAll(removed);
+        if (!moves.isEmpty()) {
+            plugin.data().move(moves);
+            mutations += moves.size() * 2;
+        }
+        plugin.pressureSaveProbe(mutations);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -79,22 +85,17 @@ public final class TrackingListener implements Listener {
         } else {
             plugin.data().mark(pos);
         }
+        plugin.pressureSaveProbe(1);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void grow(StructureGrowEvent event) {
-        mutateGrowth(event.getBlocks());
-    }
+    public void grow(StructureGrowEvent event) { mutateGrowth(event.getBlocks()); }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void fertilize(BlockFertilizeEvent event) {
-        mutateGrowth(event.getBlocks());
-    }
+    public void fertilize(BlockFertilizeEvent event) { mutateGrowth(event.getBlocks()); }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void blockGrow(BlockGrowEvent event) {
-        mutateGrowth(List.of(event.getNewState()));
-    }
+    public void blockGrow(BlockGrowEvent event) { mutateGrowth(List.of(event.getNewState())); }
 
     private void mutateGrowth(List<BlockState> states) {
         boolean excludeGrowth = plugin.settings().trackGrowth();
@@ -105,13 +106,17 @@ public final class TrackingListener implements Listener {
             if (!excludeGrowth || state.getType().isAir()) unmark.add(pos);
             else mark.add(pos);
         }
-        if (!unmark.isEmpty()) plugin.data().unmarkAll(unmark);
-        if (mark != null && !mark.isEmpty()) plugin.data().markAll(mark);
+        int mutations = 0;
+        if (!unmark.isEmpty()) mutations += plugin.data().unmarkAll(unmark);
+        if (mark != null && !mark.isEmpty()) mutations += plugin.data().markAll(mark);
+        plugin.pressureSaveProbe(mutations);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void form(BlockFormEvent event) {
-        if (plugin.settings().trackFormation()) plugin.data().mark(position(event.getBlock()));
+        if (!plugin.settings().trackFormation()) return;
+        plugin.data().mark(position(event.getBlock()));
+        plugin.pressureSaveProbe(1);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -119,6 +124,7 @@ public final class TrackingListener implements Listener {
         // Preserve artificial provenance through grass/sculk/mushroom conversions as well.
         if (plugin.settings().trackFormation() || plugin.data().artificial(position(event.getSource()))) {
             plugin.data().mark(position(event.getBlock()));
+            plugin.pressureSaveProbe(1);
         }
     }
 
@@ -132,17 +138,23 @@ public final class TrackingListener implements Listener {
         if (blocks.isEmpty()) return;
         ArrayList<Position> positions = new ArrayList<>(blocks.size());
         for (Block block : blocks) positions.add(position(block));
-        plugin.data().unmarkAll(positions);
+        plugin.pressureSaveProbe(plugin.data().unmarkAll(positions));
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void burn(BlockBurnEvent event) { plugin.data().unmark(position(event.getBlock())); }
+    public void burn(BlockBurnEvent event) {
+        if (plugin.data().unmark(position(event.getBlock()))) plugin.pressureSaveProbe(1);
+    }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void decay(LeavesDecayEvent event) { plugin.data().unmark(position(event.getBlock())); }
+    public void decay(LeavesDecayEvent event) {
+        if (plugin.data().unmark(position(event.getBlock()))) plugin.pressureSaveProbe(1);
+    }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void fade(BlockFadeEvent event) {
-        if (event.getNewState().getType().isAir()) plugin.data().unmark(position(event.getBlock()));
+        if (event.getNewState().getType().isAir() && plugin.data().unmark(position(event.getBlock()))) {
+            plugin.pressureSaveProbe(1);
+        }
     }
 }
