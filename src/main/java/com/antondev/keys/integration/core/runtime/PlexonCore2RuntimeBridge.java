@@ -5,6 +5,7 @@ import com.zpkdxgames.plexoncore.context.BlockOrigin;
 import com.zpkdxgames.plexoncore.event.CoreBlockSubscription;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.Consumer;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
@@ -38,6 +39,11 @@ public final class PlexonCore2RuntimeBridge implements CoreRuntimeBridge {
         return core.events().subscribeBlockBreak("keys", subscription, context -> consumer.accept(new BlockFact(
                 context.eventId(), context.playerId(), context.worldId(), context.worldName(),
                 context.x(), context.y(), context.z(), context.material(), map(context.origin()), context.dropItems())));
+    }
+
+    @Override
+    public Origin origin(UUID worldId, int x, int y, int z) {
+        return map(core.blockOrigins().origin(worldId, x, y, z));
     }
 
     private static Origin map(BlockOrigin origin) {
