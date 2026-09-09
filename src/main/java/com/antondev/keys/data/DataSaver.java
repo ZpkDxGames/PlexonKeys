@@ -1,5 +1,6 @@
 package com.antondev.keys.data;
 
+import java.util.Arrays;
 import java.util.concurrent.*;
 import java.util.logging.*;
 
@@ -15,14 +16,19 @@ public final class DataSaver implements AutoCloseable {
             long lastSnapshotMilliseconds,
             long lastDatabaseMilliseconds,
             long lastSaveMilliseconds,
+            long p95SaveMilliseconds,
             int lastPlayers,
             int lastBlocks,
+            long maximumDirtyCount,
+            int maximumSnapshotRecords,
+            long lastSuccessfulSaveEpochMillis,
             long saveFailures) {}
 
     private final SqliteStore database;
     private final MemoryStore memory;
     private final Logger logger;
     private final ThreadPoolExecutor worker;
+    private final long[] recentSaveDurations = new long[32];
     private CompletableFuture<Result> pending;
     private long requestedRevision = -1;
     private volatile long activeTarget = -1;
@@ -35,6 +41,10 @@ public final class DataSaver implements AutoCloseable {
     private volatile long saveFailures;
     private volatile int maximumSnapshotRecords = 4096;
     private volatile int shutdownTimeoutSeconds = 15;
+    private volatile long lastSuccessfulSaveEpochMillis;
+    private long maximumDirtyCount;
+    private int recentSaveCount;
+    private int recentSaveCursor;
     private boolean closing;
 
     public DataSaver(SqliteStore database, MemoryStore memory, Logger logger) {
@@ -70,7 +80,9 @@ public final class DataSaver implements AutoCloseable {
      */
     public synchronized CompletableFuture<Result> save() {
         if (closing) return CompletableFuture.failedFuture(new IllegalStateException("DataSaver is closing"));
-        if (memory.dirtyCount() == 0 && (pending == null || pending.isDone())) {
+        int dirty = memory.dirtyCount();
+        maximumDirtyCount = Math.max(maximumDirtyCount, dirty);
+        if (dirty == 0 && (pending == null || pending.isDone())) {
             return CompletableFuture.completedFuture(new Result(0, 0, 0));
         }
         long current = memory.revision();
@@ -129,10 +141,18 @@ public final class DataSaver implements AutoCloseable {
             lastPlayers = players;
             lastBlocks = blocks;
             lastSaveMilliseconds = nanosToMillis(System.nanoTime() - totalStart);
+            lastSuccessfulSaveEpochMillis = System.currentTimeMillis();
+            recordSaveDuration(lastSaveMilliseconds);
             return new Result(players, blocks, lastSaveMilliseconds);
         } finally {
             activeTarget = -1;
         }
+    }
+
+    private synchronized void recordSaveDuration(long milliseconds) {
+        recentSaveDurations[recentSaveCursor] = milliseconds;
+        recentSaveCursor = (recentSaveCursor + 1) % recentSaveDurations.length;
+        if (recentSaveCount < recentSaveDurations.length) recentSaveCount++;
     }
 
     public synchronized Metrics metrics() {
@@ -145,9 +165,21 @@ public final class DataSaver implements AutoCloseable {
                 lastSnapshotMilliseconds,
                 lastDatabaseMilliseconds,
                 lastSaveMilliseconds,
+                p95SaveMilliseconds(),
                 lastPlayers,
                 lastBlocks,
+                maximumDirtyCount,
+                maximumSnapshotRecords,
+                lastSuccessfulSaveEpochMillis,
                 saveFailures);
+    }
+
+    private long p95SaveMilliseconds() {
+        if (recentSaveCount == 0) return 0;
+        long[] copy = Arrays.copyOf(recentSaveDurations, recentSaveCount);
+        Arrays.sort(copy);
+        int index = Math.max(0, (int) Math.ceil(copy.length * 0.95d) - 1);
+        return copy[index];
     }
 
     private static long nanosToMillis(long nanos) {
