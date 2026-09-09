@@ -14,9 +14,13 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ConfigurationTest extends PluginTestBase {
-    @Test void defaultModeHasNoRecurringDatabaseTask() {
-        assertEquals(0, plugin.settings().checkpointSeconds());
-        assertTrue(server.getScheduler().getPendingTasks().stream().noneMatch(task -> task.getOwner().equals(plugin)));
+    @Test void defaultModeUsesRecommendedPeriodicCheckpoint() {
+        assertEquals(60, plugin.settings().checkpointSeconds());
+        assertTrue(server.getScheduler().getPendingTasks().stream().anyMatch(task -> task.getOwner().equals(plugin)));
+        assertEquals(2048, plugin.settings().yaml().getInt("storage.pressure-dirty-threshold"));
+        assertEquals(4096, plugin.settings().yaml().getInt("storage.maximum-snapshot-records"));
+        assertEquals(15, plugin.settings().yaml().getInt("storage.shutdown-timeout-seconds"));
+        assertEquals(2, plugin.settings().yaml().getInt("performance.menu-refresh-ticks"));
     }
     @Test void invalidChanceAndOverlappingSlotsDoNotTouchActiveConfigOrFile() throws Exception {
         Path file = plugin.getDataFolder().toPath().resolve("config.yml"); String before = Files.readString(file);

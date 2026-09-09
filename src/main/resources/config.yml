@@ -1,4 +1,4 @@
-# PlexonKeys 1.1.0 | Created by Tonim (ZpkDxGames) | Plexon plugin family
+# PlexonKeys 1.3.0 | Created by Tonim (ZpkDxGames) | Plexon plugin family
 # Paper 26.2 / Java 25. ALL text uses MiniMessage, not legacy & color codes.
 # Percentages: 1.0 = 1%, 0.05 = 0.05%, 100 = always, 0 = never.
 # Configure in /keysadmin, or edit this file and run /keysadmin reload.
@@ -17,14 +17,22 @@ settings:
   excluded-worlds: []
 
 storage:
-  # Always saves on normal shutdown / plugin disable. No periodic saving by default.
-  # /keysadmin save is an asynchronous manual checkpoint.
-  # OPTIONAL: 300 saves only dirty rows every 5 minutes, on one background worker.
-  # Set 0 to disable. Otherwise minimum 60 seconds, maximum 86400.
-  # WARNING: crashes / kill -9 lose changes since the last successful save.
-  # SQLite, inventories, and Vault cannot share an atomic transaction; a forced
-  # crash can also restore already-claimed keys or roll back acquisition bonuses.
-  checkpoint-seconds: 0
+  # Always performs a final controlled save on normal shutdown/plugin disable.
+  # New installs checkpoint dirty rows every 60 seconds on one background worker.
+  # Existing configs are never overwritten: keep 0 if you intentionally want shutdown-only saving.
+  # Valid checkpoint range is 60..86400 seconds, or 0 to disable periodic checkpoints.
+  checkpoint-seconds: 60
+  # Request an early coalesced checkpoint after provenance dirt grows beyond this size.
+  # 0 disables pressure-triggered requests. This never writes SQLite on the event thread.
+  pressure-dirty-threshold: 2048
+  # Bound each immutable snapshot copy/SQL batch handoff; the worker drains more batches as needed.
+  maximum-snapshot-records: 4096
+  # Maximum controlled-shutdown wait for the final database save.
+  shutdown-timeout-seconds: 15
+
+performance:
+  # Multiple rewards/claims while /keys is open are merged into one menu refresh window.
+  menu-refresh-ticks: 2
 
 tracking:
   # Player placement, pistons, and falling blocks are always tracked, even when

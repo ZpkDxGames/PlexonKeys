@@ -26,6 +26,7 @@ public final class MenuService implements Listener {
     private final PlexonKeys plugin;
     private final Map<UUID, Prompt> prompts = new ConcurrentHashMap<>();
     private final Set<UUID> pendingClicks = new HashSet<>();
+    private final Set<UUID> refreshQueued = new HashSet<>();
     public MenuService(PlexonKeys plugin) { this.plugin = plugin; }
     private ConfigurationSection config() { return plugin.settings().yaml(); }
     private KeyMenu create(Player player, KeyMenu.Kind kind, int size, Component title, KeyTier tier, String path, int page) {
@@ -50,9 +51,10 @@ public final class MenuService implements Listener {
         renderPlayer(player, menu); player.openInventory(menu.inventory);
     }
     private void renderPlayer(Player player, KeyMenu menu) {
+        Map<KeyTier, Long> balances = plugin.data().balances(player.getUniqueId());
         long total = 0;
         for (KeyTier tier : KeyTier.values()) {
-            long balance = plugin.data().balance(player.getUniqueId(), tier); total += balance;
+            long balance = balances.getOrDefault(tier, 0L); total += balance;
             String base = "categories." + tier.id();
             TagResolver[] tags = {Text.component("category", Text.parse(plugin.settings().categories().get(tier).display())), Text.value("balance", balance)};
             button(menu, config().getInt(base + ".menu.icon-slot"), base + ".menu", null, tags);
@@ -66,8 +68,19 @@ public final class MenuService implements Listener {
         if (player.hasPermission("plexonkeys.admin")) button(menu, config().getInt("gui.player.admin.slot"), "gui.player.admin", click -> openAdmin(player));
     }
     public void refreshPlayer(Player player) {
-        if (currentMenu(player) instanceof KeyMenu menu && menu.kind == KeyMenu.Kind.PLAYER
-                && menu.owner.equals(player.getUniqueId()) && menu.revision == plugin.configuration().revision()) renderPlayer(player, menu);
+        if (!(currentMenu(player) instanceof KeyMenu menu) || menu.kind != KeyMenu.Kind.PLAYER
+                || !menu.owner.equals(player.getUniqueId()) || menu.revision != plugin.configuration().revision()) return;
+        UUID playerId = player.getUniqueId();
+        if (!refreshQueued.add(playerId)) return;
+        long delay = Math.max(1L, Math.min(20L, config().getInt("performance.menu-refresh-ticks", 2)));
+        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            refreshQueued.remove(playerId);
+            if (!player.isOnline()) return;
+            if (currentMenu(player) instanceof KeyMenu current && current.kind == KeyMenu.Kind.PLAYER
+                    && current.owner.equals(playerId) && current.revision == plugin.configuration().revision()) {
+                renderPlayer(player, current);
+            }
+        }, delay);
     }
     private Object currentMenu(Player player) {
         var view = player.getOpenInventory();
@@ -291,11 +304,12 @@ public final class MenuService implements Listener {
         if (event.getView().getTopInventory().getHolder() instanceof KeyMenu) event.setCancelled(true);
     }
     @EventHandler public void quit(PlayerQuitEvent event) {
-        prompts.remove(event.getPlayer().getUniqueId()); pendingClicks.remove(event.getPlayer().getUniqueId());
-        plugin.rewards().forget(event.getPlayer().getUniqueId());
+        UUID playerId = event.getPlayer().getUniqueId();
+        prompts.remove(playerId); pendingClicks.remove(playerId); refreshQueued.remove(playerId);
+        plugin.rewards().forget(playerId);
     }
     public void closeAll() {
-        prompts.clear(); pendingClicks.clear();
+        prompts.clear(); pendingClicks.clear(); refreshQueued.clear();
         for (Player player : List.copyOf(Bukkit.getOnlinePlayers())) if (currentMenu(player) instanceof KeyMenu) player.closeInventory();
     }
 }
