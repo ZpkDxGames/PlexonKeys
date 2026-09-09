@@ -25,7 +25,8 @@ public final class PlexonCoreBridge implements CoreBridge {
             "key-claimed-event",
             "sqlite-persistence",
             "custom-item-templates",
-            "vault-bonuses");
+            "vault-bonuses",
+            "core-runtime-block-consumer");
 
     private static final Set<String> INTEGRATION_CAPABILITIES = Set.of(
             "key-api",
@@ -37,7 +38,9 @@ public final class PlexonCoreBridge implements CoreBridge {
     private final Plugin plugin;
     private final PlexonCoreAPI core;
     private final CoreVersion version;
+    private final boolean runtimeApi;
     private final boolean compatible;
+    private final String selectedRange;
     private boolean ownsRegistration;
     private String registrationState = "NOT_REGISTERED";
     private String detail = "PlexonCore API resolved";
@@ -50,8 +53,10 @@ public final class PlexonCoreBridge implements CoreBridge {
         this.plugin = plugin;
         this.core = core;
         this.version = core.version();
-        this.compatible = ModuleVersionRange.parse(SUPPORTED_API_RANGE).contains(version);
-        if (!compatible) detail = "Core API " + version.apiVersion() + " is outside supported range " + SUPPORTED_API_RANGE;
+        this.runtimeApi = version.apiVersion().startsWith("2.");
+        this.selectedRange = runtimeApi ? RUNTIME_API_RANGE : LEGACY_API_RANGE;
+        this.compatible = ModuleVersionRange.parse(selectedRange).contains(version);
+        if (!compatible) detail = "Core API " + version.apiVersion() + " is outside supported ranges " + SUPPORTED_API_RANGE;
     }
 
     private static PlexonCoreAPI resolveApi() {
@@ -65,7 +70,10 @@ public final class PlexonCoreBridge implements CoreBridge {
     @Override public boolean compatible() { return compatible; }
     @Override public String pluginVersion() { return version.pluginVersion(); }
     @Override public String apiVersion() { return version.apiVersion(); }
-    @Override public String mode() { return compatible && ownsRegistration ? "CORE" : "STANDALONE"; }
+    @Override public String mode() {
+        if (!compatible || !ownsRegistration) return "STANDALONE";
+        return runtimeApi ? "CORE_RUNTIME" : "CORE_LEGACY";
+    }
 
     @Override public String registrationState() {
         if (ownsRegistration) return core.modules().find(MODULE_ID).map(d -> d.state().name()).orElse("NOT_REGISTERED");
@@ -84,7 +92,7 @@ public final class PlexonCoreBridge implements CoreBridge {
                 plugin.getName(),
                 plugin.getPluginMeta().getVersion(),
                 plugin,
-                ModuleVersionRange.parse(SUPPORTED_API_RANGE),
+                ModuleVersionRange.parse(selectedRange),
                 CAPABILITIES,
                 ModuleState.STARTING,
                 "Initializing PlexonKeys",
@@ -98,7 +106,7 @@ public final class PlexonCoreBridge implements CoreBridge {
             plugin.getLogger().warning("PlexonCore module registration rejected: " + result.message());
         } else if (!compatible) {
             plugin.getLogger().warning("PlexonCore API " + version.apiVersion()
-                    + " is incompatible with supported range " + SUPPORTED_API_RANGE
+                    + " is incompatible with supported ranges " + SUPPORTED_API_RANGE
                     + "; key gameplay will continue in standalone compatibility mode.");
         }
     }
