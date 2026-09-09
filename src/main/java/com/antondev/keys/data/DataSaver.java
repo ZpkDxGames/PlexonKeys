@@ -66,6 +66,7 @@ public final class DataSaver implements AutoCloseable {
     /**
      * Request persistence through the current memory revision. Repeated requests extend the same in-flight
      * worker pass instead of adding executor tasks, so queue depth cannot grow with checkpoint frequency.
+     * Each caller still receives its own completion handle to preserve the 1.2 manual-save contract.
      */
     public synchronized CompletableFuture<Result> save() {
         if (closing) return CompletableFuture.failedFuture(new IllegalStateException("DataSaver is closing"));
@@ -75,7 +76,7 @@ public final class DataSaver implements AutoCloseable {
         long current = memory.revision();
         if (pending != null && !pending.isDone()) {
             if (current > requestedRevision) requestedRevision = current;
-            return pending;
+            return pending.thenApply(result -> result);
         }
         requestedRevision = current;
         try {
