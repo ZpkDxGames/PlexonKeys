@@ -2,6 +2,8 @@ package com.antondev.keys.listener;
 
 import com.antondev.keys.PlexonKeys;
 import com.antondev.keys.data.MemoryStore.Position;
+import com.antondev.keys.integration.core.runtime.CoreRuntimeBridge;
+import com.antondev.keys.integration.core.runtime.CoreRuntimeBridgeFactory;
 import java.util.*;
 import org.bukkit.*;
 import org.bukkit.block.*;
@@ -12,14 +14,16 @@ import org.bukkit.event.entity.*;
 import org.bukkit.event.world.StructureGrowEvent;
 import org.bukkit.persistence.PersistentDataType;
 
-/** Tracks only event-touched coordinates. Never scans a world or performs database I/O in an event. */
+/** Tracks only Keys-specific/legacy event-touched coordinates; Core owns ordinary placement in Runtime mode. */
 public final class TrackingListener implements Listener {
     private final PlexonKeys plugin;
     private final NamespacedKey carried;
+    private final CoreRuntimeBridge runtime;
 
     public TrackingListener(PlexonKeys plugin) {
         this.plugin = plugin;
         carried = new NamespacedKey(plugin, "artificial_block");
+        runtime = CoreRuntimeBridgeFactory.resolve(plugin, plugin.core());
     }
 
     public static Position position(Block block) {
@@ -30,10 +34,12 @@ public final class TrackingListener implements Listener {
     public void place(BlockPlaceEvent event) {
         if (!event.canBuild()) return;
         if (event instanceof BlockMultiPlaceEvent multi) {
+            // Core 2.0 tracks the primary placed block; keep the full multi-place set as a conservative overlay.
             ArrayList<Position> positions = new ArrayList<>(multi.getReplacedBlockStates().size());
             for (BlockState state : multi.getReplacedBlockStates()) positions.add(position(state.getBlock()));
             plugin.pressureSaveProbe(plugin.data().markAll(positions));
         } else {
+            if (plugin.coreBlocksOwned()) return;
             plugin.data().mark(position(event.getBlockPlaced()));
             plugin.pressureSaveProbe(1);
         }
@@ -72,6 +78,7 @@ public final class TrackingListener implements Listener {
         if (entity instanceof FallingBlock || entity instanceof Enderman) {
             if (event.getTo().isAir()) {
                 boolean artificial = plugin.data().unmark(pos);
+                if (!artificial && plugin.coreBlocksOwned()) artificial = coreOrigin(event.getBlock()) == CoreRuntimeBridge.Origin.ARTIFICIAL;
                 entity.getPersistentDataContainer().set(carried, PersistentDataType.BYTE, (byte) (artificial ? 1 : 0));
             } else {
                 Byte flag = entity.getPersistentDataContainer().get(carried, PersistentDataType.BYTE);
@@ -121,8 +128,10 @@ public final class TrackingListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void spread(BlockSpreadEvent event) {
+        boolean artificialSource = plugin.data().artificial(position(event.getSource()));
+        if (!artificialSource && plugin.coreBlocksOwned()) artificialSource = coreOrigin(event.getSource()) == CoreRuntimeBridge.Origin.ARTIFICIAL;
         // Preserve artificial provenance through grass/sculk/mushroom conversions as well.
-        if (plugin.settings().trackFormation() || plugin.data().artificial(position(event.getSource()))) {
+        if (plugin.settings().trackFormation() || artificialSource) {
             plugin.data().mark(position(event.getBlock()));
             plugin.pressureSaveProbe(1);
         }
@@ -156,5 +165,9 @@ public final class TrackingListener implements Listener {
         if (event.getNewState().getType().isAir() && plugin.data().unmark(position(event.getBlock()))) {
             plugin.pressureSaveProbe(1);
         }
+    }
+
+    private CoreRuntimeBridge.Origin coreOrigin(Block block) {
+        return runtime.origin(block.getWorld().getUID(), block.getX(), block.getY(), block.getZ());
     }
 }
