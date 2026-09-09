@@ -24,6 +24,20 @@ public final class MemoryStore {
     /** Exact result from one authoritative balance mutation. */
     public record BalanceMutation(long previous, long delta, long current) {}
 
+    public record ProvenanceMetrics(
+            double seconds,
+            long totalPositions,
+            Map<UUID, Integer> perWorld,
+            long marks,
+            long unmarks,
+            long moves,
+            int largestBatch) {
+        public double marksPerSecond() { return rate(marks); }
+        public double unmarksPerSecond() { return rate(unmarks); }
+        public double movesPerSecond() { return rate(moves); }
+        private double rate(long value) { return seconds <= 0 ? 0.0 : value / seconds; }
+    }
+
     public record Position(UUID world, long packed) {
         public static Position of(UUID world, int x, int y, int z) {
             if (x < -33_554_432 || x > 33_554_431 || z < -33_554_432 || z > 33_554_431 || y < -2048 || y > 2047) {
@@ -49,10 +63,15 @@ public final class MemoryStore {
     private final Map<UUID, Set<Long>> artificial = new HashMap<>();
     private final Map<UUID, Versioned<Account>> dirtyAccounts = new HashMap<>();
     private final Map<Position, Versioned<Boolean>> dirtyBlocks = new HashMap<>();
+    private final long metricsStartNanos = System.nanoTime();
     private List<String> cachedNames = List.of();
     private boolean namesDirty = true;
     private long version;
     private long blockCount;
+    private long provenanceMarks;
+    private long provenanceUnmarks;
+    private long provenanceMoves;
+    private int largestProvenanceBatch;
 
     public synchronized void loadAccount(Account account) {
         Objects.requireNonNull(account, "account");
@@ -259,30 +278,35 @@ public final class MemoryStore {
     }
 
     public synchronized void mark(Position position) {
-        markInternal(Objects.requireNonNull(position, "position"));
+        if (markInternal(Objects.requireNonNull(position, "position"))) largestProvenanceBatch = Math.max(largestProvenanceBatch, 1);
     }
 
     public synchronized int markAll(Collection<Position> positions) {
         Objects.requireNonNull(positions, "positions");
         int changed = 0;
         for (Position position : positions) if (markInternal(Objects.requireNonNull(position, "position"))) changed++;
+        if (changed > 0) largestProvenanceBatch = Math.max(largestProvenanceBatch, positions.size());
         return changed;
     }
 
     public synchronized boolean unmark(Position position) {
-        return unmarkInternal(Objects.requireNonNull(position, "position"));
+        boolean changed = unmarkInternal(Objects.requireNonNull(position, "position"));
+        if (changed) largestProvenanceBatch = Math.max(largestProvenanceBatch, 1);
+        return changed;
     }
 
     public synchronized int unmarkAll(Collection<Position> positions) {
         Objects.requireNonNull(positions, "positions");
         int changed = 0;
         for (Position position : positions) if (unmarkInternal(Objects.requireNonNull(position, "position"))) changed++;
+        if (changed > 0) largestProvenanceBatch = Math.max(largestProvenanceBatch, positions.size());
         return changed;
     }
 
     private boolean markInternal(Position position) {
         if (!artificial.computeIfAbsent(position.world(), ignored -> new HashSet<>()).add(position.packed())) return false;
         blockCount++;
+        provenanceMarks++;
         dirtyBlocks.put(position, new Versioned<>(++version, true));
         return true;
     }
@@ -292,6 +316,7 @@ public final class MemoryStore {
         if (set == null || !set.remove(position.packed())) return false;
         if (set.isEmpty()) artificial.remove(position.world());
         blockCount--;
+        provenanceUnmarks++;
         dirtyBlocks.put(position, new Versioned<>(++version, false));
         return true;
     }
@@ -310,6 +335,8 @@ public final class MemoryStore {
         for (Position source : moves.keySet()) unmarkInternal(source);
         for (Position target : moves.values()) unmarkInternal(target);
         for (Position target : artificialTargets) markInternal(target);
+        provenanceMoves += artificialTargets.size();
+        largestProvenanceBatch = Math.max(largestProvenanceBatch, moves.size());
     }
 
     public synchronized Snapshot snapshot() {
@@ -348,6 +375,14 @@ public final class MemoryStore {
         Objects.requireNonNull(snapshot, "snapshot");
         snapshot.accounts().forEach((id, saved) -> dirtyAccounts.remove(id, saved));
         snapshot.blocks().forEach((position, saved) -> dirtyBlocks.remove(position, saved));
+    }
+
+    public synchronized ProvenanceMetrics provenanceMetrics() {
+        HashMap<UUID, Integer> perWorld = new HashMap<>();
+        artificial.forEach((world, positions) -> perWorld.put(world, positions.size()));
+        double seconds = Math.max(0.001d, (System.nanoTime() - metricsStartNanos) / 1_000_000_000.0d);
+        return new ProvenanceMetrics(seconds, blockCount, Map.copyOf(perWorld), provenanceMarks,
+                provenanceUnmarks, provenanceMoves, largestProvenanceBatch);
     }
 
     public synchronized int playerCount() { return accounts.size(); }
