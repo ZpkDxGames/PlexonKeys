@@ -10,6 +10,7 @@ public interface CoreRuntimeBridge extends AutoCloseable {
     boolean available();
     String detail();
     AutoCloseable subscribeBlocks(Set<Material> materials, Consumer<BlockFact> consumer) throws Exception;
+    Origin origin(UUID worldId, int x, int y, int z);
     @Override default void close() {}
 
     record BlockFact(long eventId, UUID playerId, UUID worldId, String worldName,
