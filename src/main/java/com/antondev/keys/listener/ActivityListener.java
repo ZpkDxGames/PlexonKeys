@@ -2,40 +2,16 @@ package com.antondev.keys.listener;
 
 import com.antondev.keys.PlexonKeys;
 import com.antondev.keys.model.Activity;
-import org.bukkit.Tag;
 import org.bukkit.entity.*;
 import org.bukkit.event.*;
-import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.entity.EntityDeathEvent;
 import org.bukkit.event.player.PlayerFishEvent;
 
+/** Event families that remain local in 1.4 because Core 2 exposes no exact mob/fishing outcome parity yet. */
 public final class ActivityListener implements Listener {
     private final PlexonKeys plugin;
 
     public ActivityListener(PlexonKeys plugin) { this.plugin = plugin; }
-
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void broken(BlockBreakEvent event) {
-        // Provenance must always be consumed, including creative breaks and reward-disabled worlds.
-        if (plugin.data().unmark(TrackingListener.position(event.getBlock()))) {
-            plugin.pressureSaveProbe(1);
-            return;
-        }
-
-        var settings = plugin.settings();
-        var type = event.getBlock().getType();
-        boolean logging = settings.loggingMaterials().isEmpty()
-                ? Tag.LOGS.isTagged(type)
-                : settings.loggingMaterials().contains(type);
-        Activity activity = logging ? Activity.LOGGING : Activity.MINING;
-        if (!logging && !settings.miningMaterials().isEmpty() && !settings.miningMaterials().contains(type)) return;
-        if (settings.requireDrops()
-                && (!event.isDropItems()
-                || !event.getBlock().isPreferredTool(event.getPlayer().getInventory().getItemInMainHand()))) return;
-
-        // tryPerform owns permission/world/game-mode/activity eligibility exactly once.
-        plugin.rewards().tryPerform(event.getPlayer(), activity);
-    }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void fish(PlayerFishEvent event) {

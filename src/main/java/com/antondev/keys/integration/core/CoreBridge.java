@@ -1,7 +1,9 @@
 package com.antondev.keys.integration.core;
 
 public interface CoreBridge {
-    String SUPPORTED_API_RANGE = ">=1.0 <2.0";
+    String LEGACY_API_RANGE = ">=1.0 <2.0";
+    String RUNTIME_API_RANGE = ">=2.0 <3.0";
+    String SUPPORTED_API_RANGE = LEGACY_API_RANGE + " | " + RUNTIME_API_RANGE;
     String MODULE_ID = "keys";
 
     boolean installed();
