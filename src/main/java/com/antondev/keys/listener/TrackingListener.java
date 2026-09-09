@@ -16,29 +16,49 @@ import org.bukkit.persistence.PersistentDataType;
 public final class TrackingListener implements Listener {
     private final PlexonKeys plugin;
     private final NamespacedKey carried;
-    public TrackingListener(PlexonKeys plugin) { this.plugin = plugin; carried = new NamespacedKey(plugin, "artificial_block"); }
-    public static Position position(Block block) { return Position.of(block.getWorld().getUID(), block.getX(), block.getY(), block.getZ()); }
+
+    public TrackingListener(PlexonKeys plugin) {
+        this.plugin = plugin;
+        carried = new NamespacedKey(plugin, "artificial_block");
+    }
+
+    public static Position position(Block block) {
+        return Position.of(block.getWorld().getUID(), block.getX(), block.getY(), block.getZ());
+    }
+
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void place(BlockPlaceEvent event) {
         if (!event.canBuild()) return;
-        if (event instanceof BlockMultiPlaceEvent multi) multi.getReplacedBlockStates().forEach(state -> mark(state.getBlock()));
-        else mark(event.getBlockPlaced());
+        if (event instanceof BlockMultiPlaceEvent multi) {
+            ArrayList<Position> positions = new ArrayList<>(multi.getReplacedBlockStates().size());
+            for (BlockState state : multi.getReplacedBlockStates()) positions.add(position(state.getBlock()));
+            plugin.data().markAll(positions);
+        } else {
+            plugin.data().mark(position(event.getBlockPlaced()));
+        }
     }
+
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void extend(BlockPistonExtendEvent event) { move(event.getBlocks(), event.getDirection()); }
+
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void retract(BlockPistonRetractEvent event) {
-        // Paper supplies the movement direction for nonempty retract events (already opposite the piston facing).
+        // Paper supplies the movement direction for nonempty retract events (already opposite piston facing).
         move(event.getBlocks(), event.getDirection());
     }
+
     private void move(List<Block> blocks, BlockFace direction) {
-        Map<Position, Position> moves = new HashMap<>();
+        Map<Position, Position> moves = new HashMap<>(Math.max(4, blocks.size() * 2));
+        ArrayList<Position> removed = new ArrayList<>();
         for (Block block : blocks) {
-            if (block.getPistonMoveReaction() == PistonMoveReaction.BREAK) plugin.data().unmark(position(block));
-            else moves.put(position(block), position(block.getRelative(direction)));
+            Position source = position(block);
+            if (block.getPistonMoveReaction() == PistonMoveReaction.BREAK) removed.add(source);
+            else moves.put(source, position(block.getRelative(direction)));
         }
-        plugin.data().move(moves);
+        if (!removed.isEmpty()) plugin.data().unmarkAll(removed);
+        if (!moves.isEmpty()) plugin.data().move(moves);
     }
+
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void entityChange(EntityChangeBlockEvent event) {
         Position pos = position(event.getBlock());
@@ -54,36 +74,75 @@ public final class TrackingListener implements Listener {
                 if (flag == null || flag == 1) plugin.data().mark(pos);
                 entity.getPersistentDataContainer().remove(carried);
             }
-        } else if (event.getTo().isAir()) plugin.data().unmark(pos);
-        else plugin.data().mark(pos);
+        } else if (event.getTo().isAir()) {
+            plugin.data().unmark(pos);
+        } else {
+            plugin.data().mark(pos);
+        }
     }
+
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void grow(StructureGrowEvent event) { event.getBlocks().forEach(this::grown); }
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void fertilize(BlockFertilizeEvent event) { event.getBlocks().forEach(this::grown); }
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void blockGrow(BlockGrowEvent event) { grown(event.getNewState()); }
-    private void grown(BlockState state) {
-        if (state.getType().isAir() || !plugin.settings().trackGrowth()) plugin.data().unmark(position(state.getBlock()));
-        else mark(state.getBlock());
+    public void grow(StructureGrowEvent event) {
+        mutateGrowth(event.getBlocks());
     }
+
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void form(BlockFormEvent event) { if (plugin.settings().trackFormation()) mark(event.getBlock()); }
+    public void fertilize(BlockFertilizeEvent event) {
+        mutateGrowth(event.getBlocks());
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void blockGrow(BlockGrowEvent event) {
+        mutateGrowth(List.of(event.getNewState()));
+    }
+
+    private void mutateGrowth(List<BlockState> states) {
+        boolean excludeGrowth = plugin.settings().trackGrowth();
+        ArrayList<Position> mark = excludeGrowth ? new ArrayList<>(states.size()) : null;
+        ArrayList<Position> unmark = new ArrayList<>();
+        for (BlockState state : states) {
+            Position pos = position(state.getBlock());
+            if (!excludeGrowth || state.getType().isAir()) unmark.add(pos);
+            else mark.add(pos);
+        }
+        if (!unmark.isEmpty()) plugin.data().unmarkAll(unmark);
+        if (mark != null && !mark.isEmpty()) plugin.data().markAll(mark);
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void form(BlockFormEvent event) {
+        if (plugin.settings().trackFormation()) plugin.data().mark(position(event.getBlock()));
+    }
+
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void spread(BlockSpreadEvent event) {
         // Preserve artificial provenance through grass/sculk/mushroom conversions as well.
-        if (plugin.settings().trackFormation() || plugin.data().artificial(position(event.getSource()))) mark(event.getBlock());
+        if (plugin.settings().trackFormation() || plugin.data().artificial(position(event.getSource()))) {
+            plugin.data().mark(position(event.getBlock()));
+        }
     }
+
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void blockExplosion(BlockExplodeEvent event) { event.blockList().forEach(this::remove); }
+    public void blockExplosion(BlockExplodeEvent event) { removeAll(event.blockList()); }
+
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void entityExplosion(EntityExplodeEvent event) { event.blockList().forEach(this::remove); }
+    public void entityExplosion(EntityExplodeEvent event) { removeAll(event.blockList()); }
+
+    private void removeAll(List<Block> blocks) {
+        if (blocks.isEmpty()) return;
+        ArrayList<Position> positions = new ArrayList<>(blocks.size());
+        for (Block block : blocks) positions.add(position(block));
+        plugin.data().unmarkAll(positions);
+    }
+
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void burn(BlockBurnEvent event) { remove(event.getBlock()); }
+    public void burn(BlockBurnEvent event) { plugin.data().unmark(position(event.getBlock())); }
+
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void decay(LeavesDecayEvent event) { remove(event.getBlock()); }
+    public void decay(LeavesDecayEvent event) { plugin.data().unmark(position(event.getBlock())); }
+
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void fade(BlockFadeEvent event) { if (event.getNewState().getType().isAir()) remove(event.getBlock()); }
-    private void mark(Block block) { plugin.data().mark(position(block)); }
-    private void remove(Block block) { plugin.data().unmark(position(block)); }
+    public void fade(BlockFadeEvent event) {
+        if (event.getNewState().getType().isAir()) plugin.data().unmark(position(event.getBlock()));
+    }
 }
