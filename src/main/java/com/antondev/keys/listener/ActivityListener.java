@@ -17,7 +17,10 @@ public final class ActivityListener implements Listener {
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void broken(BlockBreakEvent event) {
         // Provenance must always be consumed, including creative breaks and reward-disabled worlds.
-        if (plugin.data().unmark(TrackingListener.position(event.getBlock()))) return;
+        if (plugin.data().unmark(TrackingListener.position(event.getBlock()))) {
+            plugin.pressureSaveProbe(1);
+            return;
+        }
 
         var settings = plugin.settings();
         var type = event.getBlock().getType();
