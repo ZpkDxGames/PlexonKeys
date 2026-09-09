@@ -62,7 +62,7 @@ public final class PlexonKeysApiImpl implements PlexonKeysAPI {
 
     private static void requirePrimaryThread() {
         if (!Bukkit.isPrimaryThread()) {
-            throw new IllegalStateException("PlexonKeysAPI 1.2.x must be called from the primary server thread");
+            throw new IllegalStateException("PlexonKeysAPI 1.3.x must be called from the primary server thread");
         }
     }
 }
