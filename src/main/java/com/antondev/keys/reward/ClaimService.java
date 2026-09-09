@@ -18,44 +18,65 @@ public final class ClaimService {
 
     public void claim(Player player, KeyTier only, boolean one) {
         Text text = plugin.settings().text();
-        if (!player.hasPermission("plexonkeys.use")) { text.send(player, "no-permission"); return; }
-        if (!claiming.add(player.getUniqueId())) return;
+        if (!player.hasPermission("plexonkeys.use")) {
+            text.send(player, "no-permission");
+            return;
+        }
+        UUID playerId = player.getUniqueId();
+        if (!claiming.add(playerId)) return;
+
         try {
+            Map<KeyTier, Long> balances = plugin.balances().balances(playerId);
             var amounts = new EnumMap<KeyTier, Long>(KeyTier.class);
             var templates = new EnumMap<KeyTier, ItemStack>(KeyTier.class);
-            for (KeyTier tier : KeyTier.values()) if (only == null || tier == only) {
-                amounts.put(tier, Math.min(plugin.balances().balance(player.getUniqueId(), tier), one ? 1 : Long.MAX_VALUE));
+            boolean any = false;
+            for (KeyTier tier : KeyTier.values()) {
+                if (only != null && tier != only) continue;
+                long requested = Math.min(balances.getOrDefault(tier, 0L), one ? 1L : Long.MAX_VALUE);
+                amounts.put(tier, requested);
                 templates.put(tier, plugin.settings().categories().get(tier).itemCopy());
+                any |= requested > 0;
             }
-            if (amounts.values().stream().allMatch(amount -> amount == 0)) { text.send(player, "no-keys"); return; }
+            if (!any) {
+                text.send(player, "no-keys");
+                return;
+            }
 
+            // One defensive baseline clone is retained for rollback. InventoryDelivery is copy-on-write,
+            // so it no longer performs a second deep clone of every untouched storage slot.
             ItemStack[] before = Arrays.stream(player.getInventory().getStorageContents())
-                    .map(i -> i == null ? null : i.clone()).toArray(ItemStack[]::new);
+                    .map(item -> item == null ? null : item.clone())
+                    .toArray(ItemStack[]::new);
             var plan = InventoryDelivery.plan(before, player.getInventory().getMaxStackSize(), templates, amounts);
-            if (plan.total() == 0) { text.send(player, "inventory-full"); return; }
-            if (!plugin.balances().debitForClaim(player.getUniqueId(), plan.delivered())) return;
+            if (plan.total() == 0) {
+                text.send(player, "inventory-full");
+                return;
+            }
+            if (!plugin.balances().debitForClaim(playerId, plan.delivered())) return;
 
             try {
                 player.getInventory().setStorageContents(plan.contents());
             } catch (RuntimeException error) {
                 // State restoration is intentionally silent: a failed claim must never look like a new acquisition.
-                plugin.balances().silentRestore(player.getUniqueId(), plan.delivered());
-                try { player.getInventory().setStorageContents(before); }
-                catch (RuntimeException restore) { error.addSuppressed(restore); }
-                plugin.getLogger().log(Level.SEVERE, "Could not deliver keys to " + player.getUniqueId(), error);
+                plugin.balances().silentRestore(playerId, plan.delivered());
+                try {
+                    player.getInventory().setStorageContents(before);
+                } catch (RuntimeException restore) {
+                    error.addSuppressed(restore);
+                }
+                plugin.getLogger().log(Level.SEVERE, "Could not deliver keys to " + playerId, error);
                 text.send(player, "inventory-full");
                 return;
             }
 
-            // The virtual debit and physical inventory mutation are now committed. Publish one event per delivered tier.
+            // The virtual debit and physical inventory mutation are now committed. Preserve 1.2's one-event-per-tier contract.
             publishClaimEvents(player, plan.delivered());
 
-            long remaining = Arrays.stream(KeyTier.values())
-                    .mapToLong(tier -> plugin.balances().balance(player.getUniqueId(), tier)).sum();
+            long remaining = plugin.balances().balances(playerId).values().stream().mapToLong(Long::longValue).sum();
             text.send(player, "claimed", Text.value("amount", plan.total()), Text.value("remaining", remaining));
             plugin.menus().refreshPlayer(player);
         } finally {
-            claiming.remove(player.getUniqueId());
+            claiming.remove(playerId);
         }
     }
 
