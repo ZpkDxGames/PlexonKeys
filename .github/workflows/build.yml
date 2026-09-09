@@ -62,6 +62,7 @@ jobs:
             exit 1
           fi
           jar_name=$(basename "${jar_path}")
+          test "${jar_name}" = 'PlexonKeys-1.3.0.jar'
           cd target
           sha256sum "${jar_name}" > SHA256SUMS.txt
           sha256sum --check SHA256SUMS.txt
@@ -71,9 +72,9 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: PlexonKeys-1.2.0-${{ github.sha }}
+          name: PlexonKeys-1.3.0-${{ github.sha }}
           path: |
-            target/PlexonKeys-1.2.0.jar
+            target/PlexonKeys-1.3.0.jar
             target/SHA256SUMS.txt
           if-no-files-found: error
 
