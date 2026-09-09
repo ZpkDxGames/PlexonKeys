@@ -236,6 +236,7 @@ public class PlexonKeys extends JavaPlugin implements Listener {
     public void diagnostics(CommandSender sender) {
         boolean apiRegistered = Bukkit.getServicesManager().getRegistration(PlexonKeysAPI.class) != null;
         DataSaver.Metrics storage = saver == null ? null : saver.metrics();
+        RewardService.Metrics reward = rewards.metrics();
         sender.sendMessage("§8§m----------------------------------------");
         sender.sendMessage("§6PlexonKeys diagnostics");
         sender.sendMessage("§7Version: §f" + getPluginMeta().getVersion());
@@ -253,16 +254,29 @@ public class PlexonKeys extends JavaPlugin implements Listener {
         sender.sendMessage("§7PlexonKeysAPI: §f" + (apiRegistered ? "REGISTERED" : "UNAVAILABLE"));
         sender.sendMessage("§7Earn event: §fcom.antondev.keys.event.PlexonKeyEarnedEvent");
         sender.sendMessage("§7Claim event: §fcom.antondev.keys.event.PlexonKeyClaimedEvent");
+        sender.sendMessage("§7Reward eligible / ineligible per sec: §f" + rate(reward.eligiblePerSecond())
+                + " / " + rate(reward.ineligiblePerSecond()));
+        sender.sendMessage("§7Reward rolls per sec / wins: §f" + rate(reward.rollsPerSecond()) + " / " + reward.wins());
+        sender.sendMessage("§7Rejects cooldown / cap / permission: §f" + reward.cooldownRejects() + " / "
+                + reward.capRejects() + " / " + reward.permissionRejects());
         if (storage != null) {
             sender.sendMessage("§7Save in flight / requested: §f" + storage.inFlight() + " / " + storage.saveRequested());
             sender.sendMessage("§7Storage revision requested / ack: §f" + storage.requestedRevision() + " / " + storage.acknowledgedRevision());
             sender.sendMessage("§7Last snapshot / DB / save ms: §f" + storage.lastSnapshotMilliseconds()
                     + " / " + storage.lastDatabaseMilliseconds() + " / " + storage.lastSaveMilliseconds());
+            sender.sendMessage("§7P95 save ms / max dirty / batch cap: §f" + storage.p95SaveMilliseconds() + " / "
+                    + storage.maximumDirtyCount() + " / " + storage.maximumSnapshotRecords());
             sender.sendMessage("§7Last save rows / failures: §f" + storage.lastPlayers() + "+" + storage.lastBlocks()
                     + " / " + storage.saveFailures());
+            sender.sendMessage("§7Last successful save: §f" + (storage.lastSuccessfulSaveEpochMillis() == 0
+                    ? "never" : java.time.Instant.ofEpochMilli(storage.lastSuccessfulSaveEpochMillis())));
         }
         if (core != null && !core.detail().isBlank()) sender.sendMessage("§7Core detail: §f" + core.detail());
         sender.sendMessage("§8§m----------------------------------------");
+    }
+
+    private static String rate(double value) {
+        return String.format(java.util.Locale.ROOT, "%.2f", value);
     }
 
     public TagResolver[] statusTags() {
