@@ -14,9 +14,26 @@ import org.bukkit.entity.Player;
 /** High-frequency reward path. Configuration-derived roll data is rebuilt only when config revision changes. */
 public final class RewardService {
     public static final List<KeyTier> HIGHEST_FIRST = List.of(KeyTier.LEGENDARY, KeyTier.EPIC, KeyTier.RARE, KeyTier.BASIC);
-    private static final int CHANCE_SCALE = 100_000; // 0.001 percentage-point precision.
 
-    private record Candidate(KeyTier tier, Settings.Category category, int threshold, Component display) {}
+    public record Metrics(
+            double seconds,
+            long eligibleEvents,
+            long ineligibleEvents,
+            long rolls,
+            long cooldownRejects,
+            long capRejects,
+            long permissionRejects,
+            Map<KeyTier, Long> wins) {
+        public double eligiblePerSecond() { return rate(eligibleEvents); }
+        public double ineligiblePerSecond() { return rate(ineligibleEvents); }
+        public double rollsPerSecond() { return rate(rolls); }
+        public double cooldownRejectsPerSecond() { return rate(cooldownRejects); }
+        public double capRejectsPerSecond() { return rate(capRejects); }
+        public double permissionRejectsPerSecond() { return rate(permissionRejects); }
+        private double rate(long value) { return seconds <= 0 ? 0.0 : value / seconds; }
+    }
+
+    private record Candidate(KeyTier tier, Settings.Category category, double chance, Component display) {}
     private record ActivityPlan(boolean enabled, long cooldownNanos, String display, List<Candidate> candidates) {}
     private record RewardRuntime(
             Settings settings,
@@ -28,8 +45,16 @@ public final class RewardService {
 
     private final PlexonKeys plugin;
     private final Map<UUID, long[]> cooldowns = new HashMap<>();
+    private final long metricsStartNanos = System.nanoTime();
+    private final long[] wins = new long[KeyTier.values().length];
     private volatile RewardRuntime runtime;
     private volatile long runtimeRevision = Long.MIN_VALUE;
+    private long eligibleEvents;
+    private long ineligibleEvents;
+    private long rolls;
+    private long cooldownRejects;
+    private long capRejects;
+    private long permissionRejects;
 
     public RewardService(PlexonKeys plugin) {
         this.plugin = plugin;
@@ -61,29 +86,52 @@ public final class RewardService {
         RewardRuntime current = current();
         Settings settings = current.settings();
         ActivityPlan plan = current.plans().get(activity);
-        if (!settings.enabled() || !plan.enabled() || plan.candidates().isEmpty()) return false;
-        if (!player.hasPermission("plexonkeys.earn")) return false;
-        if (!settings.gameModes().contains(player.getGameMode()) || !settings.allowsWorld(player.getWorld())) return false;
+        if (!settings.enabled() || !plan.enabled() || plan.candidates().isEmpty()) {
+            ineligibleEvents++;
+            return false;
+        }
+        if (!player.hasPermission("plexonkeys.earn")) {
+            ineligibleEvents++;
+            permissionRejects++;
+            return false;
+        }
+        if (!settings.gameModes().contains(player.getGameMode()) || !settings.allowsWorld(player.getWorld())) {
+            ineligibleEvents++;
+            return false;
+        }
 
         if (plan.cooldownNanos() > 0) {
             long now = System.nanoTime();
             long[] last = cooldowns.computeIfAbsent(player.getUniqueId(), ignored -> new long[Activity.values().length]);
             long previous = last[activity.ordinal()];
-            if (previous != 0 && now - previous < plan.cooldownNanos()) return false;
+            if (previous != 0 && now - previous < plan.cooldownNanos()) {
+                ineligibleEvents++;
+                cooldownRejects++;
+                return false;
+            }
             last[activity.ordinal()] = now;
         }
 
+        eligibleEvents++;
         boolean awarded = false;
         ThreadLocalRandom random = ThreadLocalRandom.current();
         for (Candidate candidate : plan.candidates()) {
             Settings.Category category = candidate.category();
-            if (!category.permission().isBlank() && !player.hasPermission(category.permission())) continue;
-            if (candidate.threshold() < CHANCE_SCALE && random.nextInt(CHANCE_SCALE) >= candidate.threshold()) continue;
+            if (!category.permission().isBlank() && !player.hasPermission(category.permission())) {
+                permissionRejects++;
+                continue;
+            }
+            rolls++;
+            if (candidate.chance() < 100.0d && random.nextDouble(100.0d) >= candidate.chance()) continue;
 
             KeyBalanceService.GrantResult result = plugin.balances().grantResult(
                     player, candidate.tier(), 1, "activity:" + activity.id());
-            if (result.credited() == 0) continue;
+            if (result.credited() == 0) {
+                capRejects++;
+                continue;
+            }
 
+            wins[candidate.tier().ordinal()]++;
             awarded = true;
             acquired(player, plan, candidate, current, result);
             if (settings.highestOnly()) break;
@@ -149,9 +197,9 @@ public final class RewardService {
             for (KeyTier tier : HIGHEST_FIRST) {
                 Settings.Category category = settings.categories().get(tier);
                 if (!category.enabled()) continue;
-                int threshold = chanceThreshold(category.chances().get(activity));
-                if (threshold <= 0) continue;
-                candidates.add(new Candidate(tier, category, threshold, Text.parse(category.display())));
+                double chance = validatedChance(category.chances().get(activity));
+                if (chance <= 0.0d) continue;
+                candidates.add(new Candidate(tier, category, chance, Text.parse(category.display())));
             }
             plans.put(activity, new ActivityPlan(
                     task.enabled(), Math.multiplyExact(task.cooldownMillis(), 1_000_000L), task.display(), List.copyOf(candidates)));
@@ -168,11 +216,19 @@ public final class RewardService {
         return next;
     }
 
-    private static int chanceThreshold(double percent) {
-        if (!Double.isFinite(percent) || percent < 0 || percent > 100) {
+    private static double validatedChance(double percent) {
+        if (!Double.isFinite(percent) || percent < 0.0d || percent > 100.0d) {
             throw new IllegalArgumentException("Invalid percentage: " + percent);
         }
-        return (int) Math.round(percent * 1000.0d);
+        return percent;
+    }
+
+    public Metrics metrics() {
+        double seconds = Math.max(0.001d, (System.nanoTime() - metricsStartNanos) / 1_000_000_000.0d);
+        EnumMap<KeyTier, Long> byTier = new EnumMap<>(KeyTier.class);
+        for (KeyTier tier : KeyTier.values()) byTier.put(tier, wins[tier.ordinal()]);
+        return new Metrics(seconds, eligibleEvents, ineligibleEvents, rolls, cooldownRejects, capRejects,
+                permissionRejects, Map.copyOf(byTier));
     }
 
     public void forget(UUID player) { cooldowns.remove(player); }
