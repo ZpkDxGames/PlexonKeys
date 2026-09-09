@@ -50,8 +50,7 @@ jobs:
           grep -qx 'org/sqlite/JDBC.class' target/jar-contents.txt
           unzip -p "$JAR" plugin.yml | grep -F "version: '1.4.1'"
           if grep -q '^com/zpkdxgames/plexoncore/' target/jar-contents.txt; then exit 1; fi
-          sha256sum "$JAR" > target/SHA256SUMS.txt
-          (cd target && sha256sum --check SHA256SUMS.txt)
+          (cd target && sha256sum PlexonKeys-1.4.1.jar > SHA256SUMS.txt && sha256sum --check SHA256SUMS.txt)
 
       - name: Publish immutable v1.4.1 release
         env:
