@@ -22,20 +22,20 @@ jobs:
           java-version: '25'
           cache: maven
 
-      - name: Provision PlexonCore 2.0.2 API
+      - name: Provision PlexonCore 2.0.4 API
         shell: bash
         run: |
           set -euo pipefail
-          core_jar="${RUNNER_TEMP}/PlexonCore-2.0.2.jar"
+          core_jar="${RUNNER_TEMP}/PlexonCore-2.0.4.jar"
           curl --fail --location --silent --show-error \
             --output "${core_jar}" \
-            "https://github.com/ZpkDxGames/PlexonCore/releases/download/v2.0.2/PlexonCore-2.0.2.jar"
-          echo "7e096ada4293017203cd4e01cb93761d169fa4c756fc46af520b2aed11a10ef5  ${core_jar}" | sha256sum --check
+            "https://github.com/ZpkDxGames/PlexonCore/releases/download/v2.0.4/PlexonCore-2.0.4.jar"
+          echo "61d625a717da9f46ee9231e1970d84b4c317ae12cf4090cdf7c9d39b6a1a9baf  ${core_jar}" | sha256sum --check
           mvn -B -ntp org.apache.maven.plugins:maven-install-plugin:3.1.4:install-file \
             -Dfile="${core_jar}" \
             -DgroupId=com.zpkdxgames \
             -DartifactId=PlexonCore \
-            -Dversion=2.0.2 \
+            -Dversion=2.0.4 \
             -Dpackaging=jar \
             -DgeneratePom=true
 
@@ -47,6 +47,8 @@ jobs:
         run: |
           set -euo pipefail
           project_version=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version)
+          test "$project_version" = "1.4.1"
+          test "$(mvn -q -DforceStdout help:evaluate -Dexpression=plexoncore.version)" = "2.0.4"
           expected="PlexonKeys-${project_version}.jar"
           mapfile -t jars < <(find target -maxdepth 1 -type f -name 'PlexonKeys-*.jar' -print)
           test "${#jars[@]}" -eq 1
@@ -60,6 +62,7 @@ jobs:
           grep -qx 'com/antondev/keys/event/PlexonKeyEarnedEvent.class' target/jar-contents.txt
           grep -qx 'com/antondev/keys/event/PlexonKeyClaimedEvent.class' target/jar-contents.txt
           grep -qx 'org/sqlite/JDBC.class' target/jar-contents.txt
+          unzip -p "$jar_path" plugin.yml | grep -F "version: '1.4.1'"
           if grep -q '^com/zpkdxgames/plexoncore/' target/jar-contents.txt; then
             echo "PlexonCore runtime classes must not be shaded into PlexonKeys" >&2
             exit 1

@@ -117,23 +117,37 @@ public final class PlexonCoreBridge implements CoreBridge {
 
     private void update(ModuleState moduleState, IntegrationState integrationState, String newDetail) {
         if (!compatible || !ownsRegistration) return;
-        core.modules().updateState(MODULE_ID, moduleState, newDetail);
+        String resolvedDetail = newDetail == null ? "" : newDetail;
+        if (runtimeApi) {
+            if (!core.modules().updateState(MODULE_ID, plugin, moduleState, resolvedDetail)) {
+                ownsRegistration = false;
+                registrationState = "NOT_REGISTERED";
+                detail = "Core module ownership changed before state update";
+                return;
+            }
+        } else {
+            core.modules().updateState(MODULE_ID, moduleState, resolvedDetail);
+        }
         core.integrations().publish(
                 "PLEXON_KEYS",
                 plugin.getName(),
                 plugin.getPluginMeta().getVersion(),
                 integrationState,
                 INTEGRATION_CAPABILITIES,
-                newDetail);
+                resolvedDetail);
         registrationState = moduleState.name();
-        detail = newDetail == null ? "" : newDetail;
+        detail = resolvedDetail;
     }
 
     @Override public void unregister() {
         if (!ownsRegistration) return;
-        core.modules().find(MODULE_ID)
-                .filter(descriptor -> descriptor.plugin() == plugin)
-                .ifPresent(descriptor -> core.modules().unregister(MODULE_ID));
+        if (runtimeApi) {
+            core.modules().unregisterOwnedBy(plugin);
+        } else {
+            core.modules().find(MODULE_ID)
+                    .filter(descriptor -> descriptor.plugin() == plugin)
+                    .ifPresent(descriptor -> core.modules().unregister(MODULE_ID));
+        }
         if (compatible) {
             core.integrations().publish(
                     "PLEXON_KEYS",
