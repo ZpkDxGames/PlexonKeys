@@ -2,9 +2,9 @@
 
 Activity-driven virtual keys and safe physical key claiming for Paper 26.2, created and maintained by **Tonim (ZpkDxGames)** as part of the Plexon plugin family.
 
-**Runtime:** Paper **26.2**, Java **25**  
-**PlexonCore:** optional runtime integration with **PlexonCore 1.0.0 / Core API 1.x**  
-**Storage:** `plugins/PlexonKeys/plexonkeys.db`  
+**Runtime:** Paper **26.2**, Java **25**
+**PlexonCore:** optional runtime integration with **PlexonCore 1.0.0 / Core API 1.x**
+**Storage:** `plugins/PlexonKeys/plexonkeys.db`
 **Key tiers:** Basic, Rare, Epic, Legendary
 
 PlexonKeys awards virtual keys from eligible natural gameplay activity, stores exact balances/provenance in SQLite, and lets players claim complete physical key `ItemStack`s through `/keys`.
@@ -38,7 +38,7 @@ Configuration-derived roll data is prepared per configuration revision:
 - enabled activity state;
 - cooldown duration in nanoseconds;
 - enabled tier candidates in highest-first order;
-- fixed-precision chance thresholds;
+- prevalidated exact parsed chance values, including sub-0.001% configured percentages;
 - category display components;
 - notification/sound settings.
 
@@ -229,15 +229,17 @@ Players need `plexonkeys.use` for collection/claim actions and `plexonkeys.earn`
 - plugin/Paper/Java version;
 - cached players and tracked artificial positions;
 - dirty account and block counts;
+- provenance world counts, largest batch, and mark/unmark/move rates;
+- reward eligible/ineligible, roll, win, and reject counters/rates;
 - checkpoint interval;
 - database save in-flight/requested state;
 - requested and acknowledged revisions;
-- last snapshot, database, and total-save timing;
-- last saved account/block row counts;
-- save failure count;
+- last snapshot, database, total-save, and rolling P95 save timing;
+- last saved account/block row counts, maximum observed dirty count, and snapshot batch cap;
+- save failure count and last successful save time;
 - Vault/Core/API state.
 
-This is intended to make obvious persistence pressure visible without requiring continuous file logging.
+This is intended to make obvious reward/provenance/persistence pressure visible without requiring continuous file logging.
 
 ## Upgrade from 1.2.0
 
