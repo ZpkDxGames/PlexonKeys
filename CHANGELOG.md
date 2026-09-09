@@ -5,7 +5,7 @@
 ### Performance
 - Reconciled the release branch with the published 1.2.0 baseline before optimization so the stable `PlexonKeysAPI` and earned/claimed event contracts remain present.
 - Consolidated activity reward eligibility into one authoritative hot path, eliminating the listener + reward-service duplicate permission/world/game-mode validation pass.
-- Added immutable revision-aware reward runtime data with pre-indexed enabled candidates, fixed-precision chance thresholds, nanosecond cooldowns, cached notification settings, and one random source per attempt.
+- Added immutable revision-aware reward runtime data with pre-indexed enabled candidates, prevalidated exact chance values (including sub-0.001% percentages), nanosecond cooldowns, cached notification settings, and one random source per attempt.
 - Added atomic balance mutation results so reward messages receive the committed post-credit balance without an additional synchronized lookup.
 - Changed multi-tier claim debit and rollback restore to one account mutation/dirty version instead of one mutation per tier.
 - Added normalized player-name indexing and cached sorted-name results to remove repeated linear account scans from admin lookup/tab completion.
@@ -21,7 +21,7 @@
 - New installations now use a recommended 60-second periodic checkpoint; existing `config.yml` files are not overwritten, so an explicit `checkpoint-seconds: 0` remains shutdown-only.
 - Added configurable controlled-shutdown database timeout (`storage.shutdown-timeout-seconds`, default `15`) and executor termination handling.
 - Checkpoints skip clean state and configuration reload cancels/recreates the scheduled checkpoint exactly once.
-- Expanded `/keysadmin diagnostics` with dirty account/block counts, save state/revisions, snapshot/database timings, last save size, and failure count.
+- Expanded `/keysadmin diagnostics` with reward/provenance rates, dirty account/block counts, save state/revisions, snapshot/database timings, rolling P95 save duration, maximum dirty count, last save size, and failure count.
 
 ### Claims and integrations
 - Preserved complete physical `ItemStack` templates and the 1.2.x Bukkit service API surface used by PlexonCrates.
