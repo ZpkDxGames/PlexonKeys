@@ -9,8 +9,9 @@ import org.bukkit.inventory.ItemStack;
 /**
  * Stable Bukkit service API for PlexonKeys.
  *
- * <p>All methods must be invoked on the primary server thread in 1.2.x.
- * Returned maps are immutable and returned ItemStacks are defensive copies.</p>
+ * <p>All methods must be invoked on the primary server thread in 1.3.x.
+ * Returned maps are immutable and returned ItemStacks are defensive copies.
+ * The 1.2 method surface is intentionally preserved for PlexonCrates compatibility.</p>
  */
 public interface PlexonKeysAPI {
     long balance(UUID playerId, KeyTier tier);
