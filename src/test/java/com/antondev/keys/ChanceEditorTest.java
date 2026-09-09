@@ -70,6 +70,7 @@ class ChanceEditorTest extends PluginTestBase {
         assertEquals(0.004, YamlConfiguration.loadConfiguration(file().toFile()).getDouble(PATH));
     }
     @Test void decimalAdjustmentsNeverWriteUntilApplyAndUnchangedApplyDoesNotWrite() throws Exception {
+        long scheduledBefore = server.getScheduler().getPendingTasks().stream().filter(task -> task.getOwner().equals(plugin)).count();
         open(); String before = Files.readString(file()); long revision = plugin.configuration().revision();
         for (int i = 0; i < 10; i++) press(33);
         assertEquals("0.013%", draft()); assertEquals(0.003, saved());
@@ -77,7 +78,8 @@ class ChanceEditorTest extends PluginTestBase {
         for (int i = 0; i < 10; i++) press(15);
         assertEquals("0.003%", draft()); press(49);
         assertEquals(before, Files.readString(file())); assertEquals(revision, plugin.configuration().revision());
-        assertTrue(server.getScheduler().getPendingTasks().stream().noneMatch(task -> task.getOwner().equals(plugin)));
+        long scheduledAfter = server.getScheduler().getPendingTasks().stream().filter(task -> task.getOwner().equals(plugin)).count();
+        assertEquals(scheduledBefore, scheduledAfter, "Unchanged chance Apply must not schedule extra plugin work");
     }
     @Test void cancelAndClosingDiscardDrafts() throws Exception {
         open(); String before = Files.readString(file()); press(33); press(45);
