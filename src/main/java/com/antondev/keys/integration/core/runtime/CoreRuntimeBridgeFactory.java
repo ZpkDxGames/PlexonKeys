@@ -3,6 +3,7 @@ package com.antondev.keys.integration.core.runtime;
 import com.antondev.keys.integration.core.CoreBridge;
 import java.lang.reflect.InvocationTargetException;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.logging.Level;
 import org.bukkit.Material;
@@ -37,6 +38,7 @@ public final class CoreRuntimeBridgeFactory {
             @Override public AutoCloseable subscribeBlocks(Set<Material> materials, Consumer<BlockFact> consumer) {
                 throw new IllegalStateException(detail);
             }
+            @Override public Origin origin(UUID worldId, int x, int y, int z) { return Origin.UNKNOWN; }
         };
     }
 }
