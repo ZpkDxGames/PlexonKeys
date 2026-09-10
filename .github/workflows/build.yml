@@ -9,6 +9,11 @@ on:
 permissions:
   contents: read
 
+env:
+  PLUGIN_VERSION: '2.0.0-rc.1'
+  ROLLBACK_TAG: 'v1.4.1'
+  ROLLBACK_SHA: 'c06a9e4107fc259f45d32d1f0767e5e2b5d1d872'
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -32,65 +37,101 @@ jobs:
             "https://github.com/ZpkDxGames/PlexonCore/releases/download/v2.0.4/PlexonCore-2.0.4.jar"
           echo "61d625a717da9f46ee9231e1970d84b4c317ae12cf4090cdf7c9d39b6a1a9baf  ${core_jar}" | sha256sum --check
           mvn -B -ntp org.apache.maven.plugins:maven-install-plugin:3.1.4:install-file \
-            -Dfile="${core_jar}" \
-            -DgroupId=com.zpkdxgames \
-            -DartifactId=PlexonCore \
-            -Dversion=2.0.4 \
-            -Dpackaging=jar \
-            -DgeneratePom=true
+            -Dfile="${core_jar}" -DgroupId=com.zpkdxgames -DartifactId=PlexonCore \
+            -Dversion=2.0.4 -Dpackaging=jar -DgeneratePom=true
 
       - name: Test and package
         run: mvn -B -ntp clean verify
 
-      - name: Verify distribution
+      - name: Build exact test summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, pathlib, sys, xml.etree.ElementTree as ET
+          tests = failures = errors = skipped = 0
+          for path in sorted(glob.glob('target/surefire-reports/TEST-*.xml')):
+              for case in ET.parse(path).getroot().iter('testcase'):
+                  tests += 1
+                  failures += case.find('failure') is not None
+                  errors += case.find('error') is not None
+                  skipped += case.find('skipped') is not None
+          if tests == 0:
+              raise SystemExit('No tests discovered')
+          pathlib.Path('target/TEST_SUMMARY.txt').write_text(
+              f'tests={tests}\nfailures={failures}\nerrors={errors}\nskipped={skipped}\n', encoding='utf-8')
+          if failures or errors or skipped:
+              raise SystemExit(f'Release-candidate suite not clean: {tests=} {failures=} {errors=} {skipped=}')
+          print(f'Tests: {tests}; failures=0; errors=0; skipped=0')
+          PY
+
+      - name: Verify candidate distribution
         shell: bash
         run: |
           set -euo pipefail
           project_version=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version)
-          test "$project_version" = "1.4.1"
+          test "$project_version" = "$PLUGIN_VERSION"
           test "$(mvn -q -DforceStdout help:evaluate -Dexpression=plexoncore.version)" = "2.0.4"
-          expected="PlexonKeys-${project_version}.jar"
+          expected="PlexonKeys-${PLUGIN_VERSION}.jar"
           mapfile -t jars < <(find target -maxdepth 1 -type f -name 'PlexonKeys-*.jar' -print)
           test "${#jars[@]}" -eq 1
           jar_path=${jars[0]}
-          test -s "${jar_path}"
-          test "$(basename "${jar_path}")" = "${expected}"
-          jar tf "${jar_path}" > target/jar-contents.txt
+          test -s "$jar_path"
+          test "$(basename "$jar_path")" = "$expected"
+          jar tf "$jar_path" > target/jar-contents.txt
           grep -qx 'plugin.yml' target/jar-contents.txt
           grep -qx 'com/antondev/keys/PlexonKeys.class' target/jar-contents.txt
           grep -qx 'com/antondev/keys/api/PlexonKeysAPI.class' target/jar-contents.txt
-          grep -qx 'com/antondev/keys/event/PlexonKeyEarnedEvent.class' target/jar-contents.txt
-          grep -qx 'com/antondev/keys/event/PlexonKeyClaimedEvent.class' target/jar-contents.txt
+          grep -qx 'com/antondev/keys/api/KeyConsumeResult.class' target/jar-contents.txt
+          grep -qx 'com/antondev/keys/api/KeyDefinitionView.class' target/jar-contents.txt
+          grep -qx 'com/antondev/keys/event/PlexonKeyConsumedEvent.class' target/jar-contents.txt
+          grep -qx 'com/antondev/keys/integration/papi/PlexonKeysExpansion.class' target/jar-contents.txt
           grep -qx 'org/sqlite/JDBC.class' target/jar-contents.txt
-          unzip -p "$jar_path" plugin.yml | grep -F "version: '1.4.1'"
-          if grep -q '^com/zpkdxgames/plexoncore/' target/jar-contents.txt; then
-            echo "PlexonCore runtime classes must not be shaded into PlexonKeys" >&2
-            exit 1
-          fi
-          cd target
-          sha256sum "${expected}" > SHA256SUMS.txt
-          sha256sum --check SHA256SUMS.txt
+          unzip -p "$jar_path" plugin.yml | grep -F "version: '${PLUGIN_VERSION}'"
+          unzip -p "$jar_path" META-INF/MANIFEST.MF | tr -d '\r' | grep -F "Implementation-Version: ${PLUGIN_VERSION}"
+          javap -verbose -classpath "$jar_path" com.antondev.keys.PlexonKeys | grep -F 'major version: 69'
+          for prefix in 'com/zpkdxgames/plexoncore/' 'me/clip/placeholderapi/' 'com/plexon/spawners/' 'com/antondev/crates/'; do
+            if grep -q "^${prefix}" target/jar-contents.txt; then
+              echo "Provided/optional integration classes must not be shaded: ${prefix}" >&2
+              exit 1
+            fi
+          done
+          (cd target && sha256sum "$expected" > SHA256SUMS.txt && sha256sum --check SHA256SUMS.txt)
+
+      - name: Write provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > target/PROVENANCE.txt <<EOF
+          repository=ZpkDxGames/PlexonKeys
+          branch=${GITHUB_REF_NAME}
+          candidate_sha=${GITHUB_SHA}
+          version=${PLUGIN_VERSION}
+          rollback_tag=${ROLLBACK_TAG}
+          rollback_sha=${ROLLBACK_SHA}
+          java=25
+          paper=26.2.build.121-stable
+          plexoncore=2.0.4
+          config_schema=1
+          database_schema=1
+          runtime_certification=NOT_EXECUTED
+          EOF
 
       - name: Check whitespace
         run: git diff --check origin/main...HEAD
 
-      - name: Resolve artifact metadata
-        id: meta
-        shell: bash
-        run: |
-          version=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version)
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-
       - uses: actions/upload-artifact@v4
         with:
-          name: PlexonKeys-${{ steps.meta.outputs.version }}-${{ github.sha }}
+          name: PlexonKeys-${{ env.PLUGIN_VERSION }}-${{ github.sha }}
           path: |
-            target/PlexonKeys-${{ steps.meta.outputs.version }}.jar
+            target/PlexonKeys-${{ env.PLUGIN_VERSION }}.jar
             target/SHA256SUMS.txt
+            target/TEST_SUMMARY.txt
+            target/PROVENANCE.txt
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: test-results
+          name: test-results-${{ github.sha }}
           path: target/surefire-reports/

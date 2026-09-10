@@ -1,4 +1,4 @@
-name: Release
+name: Stable Release
 
 on:
   push:
@@ -9,6 +9,7 @@ permissions:
 
 jobs:
   release:
+    if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -20,14 +21,15 @@ jobs:
           java-version: '25'
           cache: maven
 
-      - name: Verify tag matches project version
+      - name: Verify stable tag matches project version
         id: meta
         shell: bash
         run: |
           set -euo pipefail
           project_version=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version)
           test "${GITHUB_REF_NAME}" = "v${project_version}"
-          test "${project_version}" = "1.4.1"
+          case "$project_version" in *-*) echo 'Prerelease versions must use the release-candidate workflow.' >&2; exit 1;; esac
+          test -f "releases/${project_version}.md"
           echo "version=${project_version}" >> "$GITHUB_OUTPUT"
 
       - name: Provision PlexonCore 2.0.4 API
@@ -35,19 +37,14 @@ jobs:
         run: |
           set -euo pipefail
           core_jar="${RUNNER_TEMP}/PlexonCore-2.0.4.jar"
-          curl --fail --location --silent --show-error \
-            --output "${core_jar}" \
+          curl --fail --location --silent --show-error --output "${core_jar}" \
             "https://github.com/ZpkDxGames/PlexonCore/releases/download/v2.0.4/PlexonCore-2.0.4.jar"
           echo "61d625a717da9f46ee9231e1970d84b4c317ae12cf4090cdf7c9d39b6a1a9baf  ${core_jar}" | sha256sum --check
           mvn -B -ntp org.apache.maven.plugins:maven-install-plugin:3.1.4:install-file \
-            -Dfile="${core_jar}" \
-            -DgroupId=com.zpkdxgames \
-            -DartifactId=PlexonCore \
-            -Dversion=2.0.4 \
-            -Dpackaging=jar \
-            -DgeneratePom=true
+            -Dfile="${core_jar}" -DgroupId=com.zpkdxgames -DartifactId=PlexonCore \
+            -Dversion=2.0.4 -Dpackaging=jar -DgeneratePom=true
 
-      - name: Test and package exact tag
+      - name: Test and package exact stable tag
         run: mvn -B -ntp clean verify
 
       - name: Verify distribution
@@ -55,31 +52,25 @@ jobs:
         run: |
           set -euo pipefail
           expected="PlexonKeys-${{ steps.meta.outputs.version }}.jar"
-          mapfile -t jars < <(find target -maxdepth 1 -type f -name 'PlexonKeys-*.jar' -print)
-          test "${#jars[@]}" -eq 1
-          jar_path=${jars[0]}
-          test -s "${jar_path}"
-          test "$(basename "${jar_path}")" = "${expected}"
-          jar tf "${jar_path}" > target/jar-contents.txt
+          test -s "target/${expected}"
+          jar tf "target/${expected}" > target/jar-contents.txt
           grep -qx 'plugin.yml' target/jar-contents.txt
           grep -qx 'com/antondev/keys/PlexonKeys.class' target/jar-contents.txt
-          grep -qx 'com/antondev/keys/api/PlexonKeysAPI.class' target/jar-contents.txt
-          grep -qx 'com/antondev/keys/event/PlexonKeyEarnedEvent.class' target/jar-contents.txt
-          grep -qx 'com/antondev/keys/event/PlexonKeyClaimedEvent.class' target/jar-contents.txt
           grep -qx 'org/sqlite/JDBC.class' target/jar-contents.txt
-          unzip -p "$jar_path" plugin.yml | grep -F "version: '1.4.1'"
-          if grep -q '^com/zpkdxgames/plexoncore/' target/jar-contents.txt; then
-            echo "PlexonCore runtime classes must not be shaded into PlexonKeys" >&2
-            exit 1
-          fi
-          cd target
-          sha256sum "${expected}" > SHA256SUMS.txt
-          sha256sum --check SHA256SUMS.txt
+          unzip -p "target/${expected}" plugin.yml | grep -F "version: '${{ steps.meta.outputs.version }}'"
+          javap -verbose -classpath "target/${expected}" com.antondev.keys.PlexonKeys | grep -F 'major version: 69'
+          for prefix in 'com/zpkdxgames/plexoncore/' 'me/clip/placeholderapi/' 'com/plexon/spawners/' 'com/antondev/crates/'; do
+            if grep -q "^${prefix}" target/jar-contents.txt; then
+              echo "Provided/optional integration classes must not be shaded: ${prefix}" >&2
+              exit 1
+            fi
+          done
+          (cd target && sha256sum "${expected}" > SHA256SUMS.txt && sha256sum --check SHA256SUMS.txt)
 
       - uses: softprops/action-gh-release@v2
         with:
           name: PlexonKeys ${{ steps.meta.outputs.version }}
-          body_path: releases/1.4.1.md
+          body_path: releases/${{ steps.meta.outputs.version }}.md
           files: |
             target/PlexonKeys-${{ steps.meta.outputs.version }}.jar
             target/SHA256SUMS.txt
