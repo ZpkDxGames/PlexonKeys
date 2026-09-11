@@ -7,7 +7,6 @@ import com.antondev.keys.data.MemoryStore;
 import com.antondev.keys.event.PlexonKeyConsumedEvent;
 import com.antondev.keys.event.PlexonKeyEarnedEvent;
 import com.antondev.keys.model.KeyTier;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -18,17 +17,9 @@ import org.bukkit.entity.Player;
 /** Central domain service for every virtual-key balance mutation. */
 public final class KeyBalanceService {
     public record GrantResult(long credited, long balance) {}
-    private record ConsumeRecord(UUID playerId, KeyTier tier, long amount, KeyConsumeResult result) {}
-
-    private static final int MAX_CONSUME_REPLAY_GUARD = 4096;
 
     private final PlexonKeys plugin;
     private final MemoryStore data;
-    private final LinkedHashMap<String, ConsumeRecord> recentConsumes = new LinkedHashMap<>(256, 0.75f, true) {
-        @Override protected boolean removeEldestEntry(Map.Entry<String, ConsumeRecord> eldest) {
-            return size() > MAX_CONSUME_REPLAY_GUARD;
-        }
-    };
 
     public KeyBalanceService(PlexonKeys plugin, MemoryStore data) {
         this.plugin = Objects.requireNonNull(plugin, "plugin");
@@ -96,8 +87,8 @@ public final class KeyBalanceService {
     }
 
     /**
-     * Exact-once virtual consume boundary for crate/opening integrations. The bounded replay guard is process-local;
-     * callers that require crash-spanning reservation semantics must keep their own durable transaction journal.
+     * Crash-durable exact-once virtual consume boundary for crate/opening integrations. The debit and the
+     * bounded transaction-id replay record are committed in one SQLite transaction before SUCCESS returns.
      */
     public synchronized KeyConsumeResult consume(UUID playerId, KeyTier tier, long amount, String transactionId) {
         UUID id = requirePlayerId(playerId);
@@ -107,33 +98,31 @@ public final class KeyBalanceService {
             throw new IllegalArgumentException("transactionId must contain 1-128 characters");
         }
 
-        ConsumeRecord previous = recentConsumes.get(transactionId);
-        if (previous != null) {
-            if (!previous.playerId().equals(id) || previous.tier() != keyTier || previous.amount() != amount) {
-                throw new IllegalArgumentException("transactionId was already used for a different consume request");
-            }
-            KeyConsumeResult prior = previous.result();
+        MemoryStore.ConsumeMutation mutation = data.consume(id, keyTier, amount, transactionId);
+        if (mutation.duplicate()) {
+            // A duplicate can still be dirty only when an earlier durability barrier failed. Retrying the same
+            // request is allowed to finish that pending commit, but can never debit a second time.
+            if (data.consumeReplayDirty(transactionId)) plugin.persistCriticalState("consume retry " + transactionId);
             return new KeyConsumeResult(KeyConsumeResult.Status.DUPLICATE, transactionId, keyTier.id(), amount,
                     0, data.balance(id, keyTier));
         }
 
-        long before = data.balance(id, keyTier);
-        if (before < amount || !data.debit(id, Map.of(keyTier, amount))) {
-            KeyConsumeResult result = new KeyConsumeResult(KeyConsumeResult.Status.INSUFFICIENT, transactionId,
+        // This barrier is intentionally not used by block/reward hot paths. It serializes through the existing
+        // single bounded database worker and returns only after the account + replay record commit succeeds.
+        plugin.persistCriticalState("consume " + transactionId);
+        if (!mutation.success()) {
+            return new KeyConsumeResult(KeyConsumeResult.Status.INSUFFICIENT, transactionId,
                     keyTier.id(), amount, 0, data.balance(id, keyTier));
-            recentConsumes.put(transactionId, new ConsumeRecord(id, keyTier, amount, result));
-            return result;
         }
 
         long current = data.balance(id, keyTier);
         KeyConsumeResult result = new KeyConsumeResult(KeyConsumeResult.Status.SUCCESS, transactionId,
                 keyTier.id(), amount, amount, current);
-        recentConsumes.put(transactionId, new ConsumeRecord(id, keyTier, amount, result));
         publishConsumed(id, keyTier, amount, transactionId);
         return result;
     }
 
-    public synchronized int consumeReplayGuardSize() { return recentConsumes.size(); }
+    public synchronized int consumeReplayGuardSize() { return data.consumeReplayCount(); }
 
     /** Atomic pre-delivery claim debit. Never emits an earned event. */
     public boolean debitForClaim(UUID playerId, Map<KeyTier, Long> amounts) {
