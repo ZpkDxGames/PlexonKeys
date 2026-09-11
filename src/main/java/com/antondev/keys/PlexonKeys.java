@@ -100,6 +100,7 @@ public class PlexonKeys extends JavaPlugin implements Listener {
             configureCheckpoint();
             warnEconomy();
             publishCoreHealth();
+            configuration.runtimeApplied();
 
             getLogger().info("PlexonKeys " + getPluginMeta().getVersion() + " by Tonim (ZpkDxGames) enabled. "
                     + data.playerCount() + " players, " + data.blockCount() + " tracked blocks."
@@ -164,7 +165,44 @@ public class PlexonKeys extends JavaPlugin implements Listener {
         data.remember(event.getPlayer().getUniqueId(), event.getPlayer().getName());
     }
 
+    /**
+     * Applies the latest validated configuration to every runtime subsystem as one logical boundary. If any
+     * candidate application step fails, restore the last runtime-accepted settings, rebuild the previous
+     * subsystem state, and then rethrow the original failure. Configuration revision stays monotonic so stale
+     * menus/reward caches cannot become authoritative again after rollback.
+     */
     public void settingsChanged() {
+        boolean candidatePending = configuration.hasPendingRuntimeChange();
+        try {
+            applySettingsChanged();
+            configuration.runtimeApplied();
+        } catch (RuntimeException applicationError) {
+            if (!candidatePending) throw applicationError;
+
+            try {
+                configuration.rollbackRuntimeCandidate();
+            } catch (Exception diskRollbackError) {
+                applicationError.addSuppressed(diskRollbackError);
+                getLogger().log(Level.SEVERE,
+                        "Configuration runtime rollback restored last-good settings but could not restore config.yml exactly.",
+                        diskRollbackError);
+            }
+
+            try {
+                applySettingsChanged();
+                configuration.runtimeApplied();
+            } catch (RuntimeException runtimeRollbackError) {
+                applicationError.addSuppressed(runtimeRollbackError);
+                getLogger().log(Level.SEVERE,
+                        "FAILED TO REBUILD LAST-GOOD PLEXONKEYS RUNTIME AFTER CONFIGURATION ERROR.", runtimeRollbackError);
+                if (core != null) core.markFailed("Configuration runtime rollback failed: "
+                        + runtimeRollbackError.getClass().getSimpleName());
+            }
+            throw applicationError;
+        }
+    }
+
+    private void applySettingsChanged() {
         menus.closeAll();
         rewards.clearCooldowns();
         rewards.reload();
