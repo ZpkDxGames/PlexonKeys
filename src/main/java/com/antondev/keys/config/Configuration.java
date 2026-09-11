@@ -59,6 +59,9 @@ public final class Configuration {
                 else if (!config.isConfigurationSection(key)) throw new IllegalArgumentException(key + ": expected a configuration section");
             } else if (!config.contains(key, true)) config.set(key, defaults.get(key));
         }
+        // Phase 3 migration: old production configs used checkpoint-seconds: 0 to mean shutdown-only.
+        // The new explicit switch makes safe checkpointing the inherited behavior without rewriting disk on reload.
+        if (!config.contains("storage.checkpoints.enabled", true)) config.set("storage.checkpoints.enabled", true);
     }
     public Settings capture(KeyTier tier, org.bukkit.inventory.ItemStack item) throws Exception {
         String encoded = Items.capture(item);
