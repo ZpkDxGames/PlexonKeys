@@ -4,11 +4,14 @@ import com.antondev.keys.model.KeyTier;
 import java.util.*;
 
 /**
- * Memory-only authoritative state. Normal gameplay access remains serialized so Bukkit's main thread
- * never races the database worker; save handoff uses immutable, versioned deltas only.
+ * Memory-authoritative gameplay state. Normal access remains serialized so Bukkit's main thread never
+ * races the database worker; save handoff uses immutable, versioned deltas only.
  */
 public final class MemoryStore {
     public static final long HARD_LIMIT = 1_000_000_000L;
+    public static final int MAX_CONSUME_REPLAY_RECORDS = 4096;
+    public static final long CONSUME_REPLAY_RETENTION_MILLIS = 7L * 24L * 60L * 60L * 1000L;
+    private static final int MAX_CONSUME_REPLAY_IN_MEMORY = MAX_CONSUME_REPLAY_RECORDS + 1;
 
     public record Account(UUID player, String name, long basic, long rare, long epic, long legendary) {
         public long amount(KeyTier tier) {
@@ -23,6 +26,23 @@ public final class MemoryStore {
 
     /** Exact result from one authoritative balance mutation. */
     public record BalanceMutation(long previous, long delta, long current) {}
+
+    /** Durable idempotency record for the public/API consume boundary. */
+    public record ConsumeReplay(String transactionId, UUID player, KeyTier tier, long amount, long createdAtEpochMillis) {
+        public ConsumeReplay {
+            if (transactionId == null || transactionId.isBlank() || transactionId.length() > 128) {
+                throw new IllegalArgumentException("transactionId must contain 1-128 characters");
+            }
+            Objects.requireNonNull(player, "player");
+            Objects.requireNonNull(tier, "tier");
+            if (amount <= 0 || amount > HARD_LIMIT) {
+                throw new IllegalArgumentException("amount must be between 1 and " + HARD_LIMIT);
+            }
+            if (createdAtEpochMillis < 0) throw new IllegalArgumentException("createdAtEpochMillis must be non-negative");
+        }
+    }
+
+    public record ConsumeMutation(boolean duplicate, boolean success, long balance) {}
 
     public record ProvenanceMetrics(
             double seconds,
@@ -49,20 +69,29 @@ public final class MemoryStore {
 
     public record Versioned<T>(long version, T value) {}
 
-    public record Snapshot(Map<UUID, Versioned<Account>> accounts, Map<Position, Versioned<Boolean>> blocks) {
+    public record Snapshot(
+            Map<UUID, Versioned<Account>> accounts,
+            Map<Position, Versioned<Boolean>> blocks,
+            Map<String, Versioned<ConsumeReplay>> consumes) {
         public Snapshot {
             accounts = Map.copyOf(accounts);
             blocks = Map.copyOf(blocks);
+            consumes = Map.copyOf(consumes);
         }
-        public boolean empty() { return accounts.isEmpty() && blocks.isEmpty(); }
-        public int size() { return accounts.size() + blocks.size(); }
+        public Snapshot(Map<UUID, Versioned<Account>> accounts, Map<Position, Versioned<Boolean>> blocks) {
+            this(accounts, blocks, Map.of());
+        }
+        public boolean empty() { return accounts.isEmpty() && blocks.isEmpty() && consumes.isEmpty(); }
+        public int size() { return accounts.size() + blocks.size() + consumes.size(); }
     }
 
     private final Map<UUID, Account> accounts = new HashMap<>();
     private final Map<String, UUID> playersByName = new HashMap<>();
     private final Map<UUID, Set<Long>> artificial = new HashMap<>();
+    private final LinkedHashMap<String, ConsumeReplay> consumeReplays = new LinkedHashMap<>();
     private final Map<UUID, Versioned<Account>> dirtyAccounts = new HashMap<>();
     private final Map<Position, Versioned<Boolean>> dirtyBlocks = new HashMap<>();
+    private final LinkedHashMap<String, Versioned<ConsumeReplay>> dirtyConsumeReplays = new LinkedHashMap<>();
     private final long metricsStartNanos = System.nanoTime();
     private List<String> cachedNames = List.of();
     private boolean namesDirty = true;
@@ -83,6 +112,15 @@ public final class MemoryStore {
     public synchronized void loadBlock(Position position) {
         Objects.requireNonNull(position, "position");
         if (artificial.computeIfAbsent(position.world(), ignored -> new HashSet<>()).add(position.packed())) blockCount++;
+    }
+
+    public synchronized void loadConsumeReplay(ConsumeReplay replay) {
+        Objects.requireNonNull(replay, "replay");
+        ConsumeReplay previous = consumeReplays.putIfAbsent(replay.transactionId(), replay);
+        if (previous != null && !sameConsume(previous, replay.player(), replay.tier(), replay.amount())) {
+            throw new IllegalArgumentException("Conflicting persisted transactionId: " + replay.transactionId());
+        }
+        pruneConsumeReplayCache(System.currentTimeMillis());
     }
 
     public synchronized Account account(UUID player) {
@@ -202,6 +240,56 @@ public final class MemoryStore {
         return true;
     }
 
+    /**
+     * Atomically reserve a consume transaction in memory together with its balance debit. The account and
+     * replay record share one version so the bounded persistence snapshot can commit them in one SQLite transaction.
+     */
+    public synchronized ConsumeMutation consume(UUID player, KeyTier tier, long amount, String transactionId) {
+        Objects.requireNonNull(player, "player");
+        Objects.requireNonNull(tier, "tier");
+        validate(amount);
+        if (amount == 0) throw new IllegalArgumentException("amount must be positive");
+        if (transactionId == null || transactionId.isBlank() || transactionId.length() > 128) {
+            throw new IllegalArgumentException("transactionId must contain 1-128 characters");
+        }
+
+        ConsumeReplay previous = consumeReplays.get(transactionId);
+        if (previous != null) {
+            if (!sameConsume(previous, player, tier, amount)) {
+                throw new IllegalArgumentException("transactionId was already used for a different consume request");
+            }
+            return new ConsumeMutation(true, false, current(player).amount(tier));
+        }
+        if (consumeReplays.size() >= MAX_CONSUME_REPLAY_IN_MEMORY) {
+            throw new IllegalStateException("consume replay guard is full; persist pending transactions before accepting another id");
+        }
+
+        Account old = current(player);
+        boolean success = old.amount(tier) >= amount;
+        long nextVersion = ++version;
+        long currentBalance = old.amount(tier);
+        if (success) {
+            currentBalance -= amount;
+            Account next = with(old, old.name(), tier, currentBalance);
+            Account replaced = accounts.put(player, next);
+            updateNameIndex(replaced, next);
+            dirtyAccounts.put(player, new Versioned<>(nextVersion, next));
+        }
+
+        ConsumeReplay replay = new ConsumeReplay(transactionId, player, tier, amount, System.currentTimeMillis());
+        consumeReplays.put(transactionId, replay);
+        dirtyConsumeReplays.put(transactionId, new Versioned<>(nextVersion, replay));
+        return new ConsumeMutation(false, success, currentBalance);
+    }
+
+    public synchronized boolean consumeReplayDirty(String transactionId) {
+        return dirtyConsumeReplays.containsKey(transactionId);
+    }
+
+    public synchronized Optional<ConsumeReplay> consumeReplay(String transactionId) {
+        return Optional.ofNullable(consumeReplays.get(transactionId));
+    }
+
     /** Restore a multi-tier claim debit with one account replacement and one dirty version. */
     public synchronized void restore(UUID player, Map<KeyTier, Long> amounts) {
         Objects.requireNonNull(player, "player");
@@ -269,6 +357,22 @@ public final class MemoryStore {
 
     private static void validate(long amount) {
         if (amount < 0 || amount > HARD_LIMIT) throw new IllegalArgumentException("Amount must be between 0 and " + HARD_LIMIT);
+    }
+
+    private static boolean sameConsume(ConsumeReplay replay, UUID player, KeyTier tier, long amount) {
+        return replay.player().equals(player) && replay.tier() == tier && replay.amount() == amount;
+    }
+
+    private void pruneConsumeReplayCache(long now) {
+        long cutoff = Math.max(0L, now - CONSUME_REPLAY_RETENTION_MILLIS);
+        Iterator<Map.Entry<String, ConsumeReplay>> iterator = consumeReplays.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<String, ConsumeReplay> entry = iterator.next();
+            if (dirtyConsumeReplays.containsKey(entry.getKey())) continue;
+            if (entry.getValue().createdAtEpochMillis() < cutoff || consumeReplays.size() > MAX_CONSUME_REPLAY_RECORDS) {
+                iterator.remove();
+            }
+        }
     }
 
     public synchronized boolean artificial(Position position) {
@@ -344,16 +448,33 @@ public final class MemoryStore {
     }
 
     /**
-     * Copy at most {@code maximumRecords} dirty rows whose version is at or below the requested save
-     * boundary. Acknowledgement still compares exact Versioned values, so later edits remain dirty.
+     * Copy at most {@code maximumRecords} dirty rows. Consume replay entries are selected first and paired
+     * with their current dirty account row so a successful debit and its idempotency record enter the same
+     * SQLite transaction. Other rows remain bounded by the requested revision boundary.
      */
     public synchronized Snapshot snapshot(int maximumRecords, long upToVersion) {
         if (maximumRecords < 1) throw new IllegalArgumentException("maximumRecords must be positive");
         LinkedHashMap<UUID, Versioned<Account>> accountCopy = new LinkedHashMap<>();
         LinkedHashMap<Position, Versioned<Boolean>> blockCopy = new LinkedHashMap<>();
+        LinkedHashMap<String, Versioned<ConsumeReplay>> consumeCopy = new LinkedHashMap<>();
         int remaining = maximumRecords;
+
+        for (var entry : dirtyConsumeReplays.entrySet()) {
+            if (entry.getValue().version() > upToVersion) continue;
+            Versioned<Account> account = dirtyAccounts.get(entry.getValue().value().player());
+            int required = 1 + (account != null && !accountCopy.containsKey(entry.getValue().value().player()) ? 1 : 0);
+            if (remaining < required) break;
+            if (account != null) {
+                accountCopy.put(entry.getValue().value().player(), account);
+                remaining--;
+            }
+            consumeCopy.put(entry.getKey(), entry.getValue());
+            remaining--;
+        }
+
         for (var entry : dirtyAccounts.entrySet()) {
             if (remaining == 0) break;
+            if (accountCopy.containsKey(entry.getKey())) continue;
             if (entry.getValue().version() <= upToVersion) {
                 accountCopy.put(entry.getKey(), entry.getValue());
                 remaining--;
@@ -368,13 +489,15 @@ public final class MemoryStore {
                 }
             }
         }
-        return new Snapshot(accountCopy, blockCopy);
+        return new Snapshot(accountCopy, blockCopy, consumeCopy);
     }
 
     public synchronized void acknowledge(Snapshot snapshot) {
         Objects.requireNonNull(snapshot, "snapshot");
         snapshot.accounts().forEach((id, saved) -> dirtyAccounts.remove(id, saved));
         snapshot.blocks().forEach((position, saved) -> dirtyBlocks.remove(position, saved));
+        snapshot.consumes().forEach((id, saved) -> dirtyConsumeReplays.remove(id, saved));
+        pruneConsumeReplayCache(System.currentTimeMillis());
     }
 
     public synchronized ProvenanceMetrics provenanceMetrics() {
@@ -387,8 +510,10 @@ public final class MemoryStore {
 
     public synchronized int playerCount() { return accounts.size(); }
     public synchronized long blockCount() { return blockCount; }
+    public synchronized int consumeReplayCount() { return consumeReplays.size(); }
     public synchronized int dirtyAccounts() { return dirtyAccounts.size(); }
     public synchronized int dirtyBlocks() { return dirtyBlocks.size(); }
-    public synchronized int dirtyCount() { return dirtyAccounts.size() + dirtyBlocks.size(); }
+    public synchronized int dirtyConsumes() { return dirtyConsumeReplays.size(); }
+    public synchronized int dirtyCount() { return dirtyAccounts.size() + dirtyBlocks.size() + dirtyConsumeReplays.size(); }
     public synchronized long revision() { return version; }
 }
