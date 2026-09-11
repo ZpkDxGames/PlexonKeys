@@ -54,11 +54,34 @@ public final class ClaimService {
             }
             if (!plugin.balances().debitForClaim(playerId, plan.delivered())) return;
 
+            // Physical inventory delivery is irreversible across a process crash. Commit the virtual debit
+            // through the existing bounded database worker before the item can become visible to the player.
+            try {
+                plugin.persistCriticalState("physical key claim debit");
+            } catch (RuntimeException persistenceError) {
+                plugin.balances().silentRestore(playerId, plan.delivered());
+                try {
+                    plugin.persistCriticalState("physical key claim debit rollback");
+                } catch (RuntimeException rollbackError) {
+                    persistenceError.addSuppressed(rollbackError);
+                }
+                plugin.getLogger().log(Level.SEVERE,
+                        "Could not durably reserve physical key claim for " + playerId + "; no key was delivered", persistenceError);
+                text.send(player, "save-failed");
+                return;
+            }
+
             try {
                 player.getInventory().setStorageContents(plan.contents());
             } catch (RuntimeException error) {
-                // State restoration is intentionally silent: a failed claim must never look like a new acquisition.
+                // Delivery did not complete. Restore virtual state and make that compensation durable before
+                // returning so a restart cannot strand the already-persisted claim debit.
                 plugin.balances().silentRestore(playerId, plan.delivered());
+                try {
+                    plugin.persistCriticalState("physical key claim delivery rollback");
+                } catch (RuntimeException persistenceError) {
+                    error.addSuppressed(persistenceError);
+                }
                 try {
                     player.getInventory().setStorageContents(before);
                 } catch (RuntimeException restore) {
@@ -69,7 +92,8 @@ public final class ClaimService {
                 return;
             }
 
-            // The virtual debit and physical inventory mutation are now committed. Preserve 1.2's one-event-per-tier contract.
+            // The virtual debit was durably committed before physical inventory mutation. Preserve 1.2's
+            // one-event-per-tier contract only after both sides of the local claim have completed.
             publishClaimEvents(player, plan.delivered());
 
             long remaining = plugin.balances().balances(playerId).values().stream().mapToLong(Long::longValue).sum();
