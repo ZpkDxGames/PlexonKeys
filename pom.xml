@@ -4,7 +4,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>com.antondev</groupId>
   <artifactId>PlexonKeys</artifactId>
-  <version>2.0.0-rc.2</version>
+  <version>2.0.0</version>
   <name>PlexonKeys</name>
   <description>Premium key identity, acquisition provenance, virtual balances, physical claims, and Plexon integrations.</description>
   <url>https://github.com/ZpkDxGames/PlexonKeys</url>
