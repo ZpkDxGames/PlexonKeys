@@ -1,6 +1,8 @@
 package com.antondev.keys.reward;
 
 import com.antondev.keys.PlexonKeys;
+import com.antondev.keys.activity.ProvenancePolicy;
+import com.antondev.keys.api.AcquisitionPreview;
 import com.antondev.keys.config.*;
 import com.antondev.keys.model.*;
 import com.antondev.keys.service.KeyBalanceService;
@@ -44,6 +46,7 @@ public final class RewardService {
             float soundPitch) {}
 
     private final PlexonKeys plugin;
+    private final ProvenancePolicy provenancePolicy;
     private final Map<UUID, long[]> cooldowns = new HashMap<>();
     private final long metricsStartNanos = System.nanoTime();
     private final long[] wins = new long[KeyTier.values().length];
@@ -58,6 +61,7 @@ public final class RewardService {
 
     public RewardService(PlexonKeys plugin) {
         this.plugin = plugin;
+        this.provenancePolicy = new ProvenancePolicy(plugin);
         rebuild();
     }
 
@@ -138,6 +142,51 @@ public final class RewardService {
         }
         if (awarded) plugin.menus().refreshPlayer(player);
         return awarded;
+    }
+
+    /**
+     * Evaluate the same immutable runtime plan without RNG, cooldown mutation, balance mutation, feedback, events,
+     * persistence dirties, or item delivery. This is safe for administrative diagnostics on the primary thread.
+     */
+    public AcquisitionPreview preview(Player player, KeyTier tier, Activity activity, ProvenancePolicy.Origin origin) {
+        Objects.requireNonNull(player, "player");
+        Objects.requireNonNull(tier, "tier");
+        Objects.requireNonNull(activity, "activity");
+        Objects.requireNonNull(origin, "origin");
+        RewardRuntime current = current();
+        Settings settings = current.settings();
+        Settings.Category category = settings.categories().get(tier);
+        ActivityPlan plan = current.plans().get(activity);
+        double chance = category.chances().getOrDefault(activity, 0.0d);
+        long balance = plugin.balances().balance(player.getUniqueId(), tier);
+
+        if (!settings.enabled()) return preview(tier, activity, origin, false, chance, balance, "PLUGIN_DISABLED");
+        if (!plan.enabled()) return preview(tier, activity, origin, false, chance, balance, "ACTIVITY_DISABLED");
+        if (!category.enabled() || chance <= 0.0d) return preview(tier, activity, origin, false, chance, balance, "NO_ACQUISITION_RULE");
+        ProvenancePolicy.Decision provenance = provenancePolicy.evaluate(activity, origin);
+        if (!provenance.eligible()) return preview(tier, activity, origin, false, chance, balance, provenance.reason());
+        if (!player.hasPermission("plexonkeys.earn")) return preview(tier, activity, origin, false, chance, balance, "NO_EARN_PERMISSION");
+        if (!settings.gameModes().contains(player.getGameMode())) return preview(tier, activity, origin, false, chance, balance, "GAME_MODE_REJECTED");
+        if (!settings.allowsWorld(player.getWorld())) return preview(tier, activity, origin, false, chance, balance, "WORLD_REJECTED");
+        if (!category.permission().isBlank() && !player.hasPermission(category.permission())) {
+            return preview(tier, activity, origin, false, chance, balance, "KEY_PERMISSION_REJECTED");
+        }
+        if (balance >= settings.cap()) return preview(tier, activity, origin, false, chance, balance, "BALANCE_CAP");
+        if (plan.cooldownNanos() > 0) {
+            long[] last = cooldowns.get(player.getUniqueId());
+            if (last != null) {
+                long previous = last[activity.ordinal()];
+                if (previous != 0 && System.nanoTime() - previous < plan.cooldownNanos()) {
+                    return preview(tier, activity, origin, false, chance, balance, "COOLDOWN_ACTIVE");
+                }
+            }
+        }
+        return preview(tier, activity, origin, true, chance, balance, "ELIGIBLE_ROLL");
+    }
+
+    private static AcquisitionPreview preview(KeyTier tier, Activity activity, ProvenancePolicy.Origin origin,
+            boolean eligible, double chance, long balance, String reason) {
+        return new AcquisitionPreview(tier.id(), activity, origin.name(), eligible, chance, balance, reason);
     }
 
     private void acquired(
