@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 env:
-  PLUGIN_VERSION: '2.0.0-rc.1'
+  PLUGIN_VERSION: '2.0.0-rc.2'
   ROLLBACK_TAG: 'v1.4.1'
   ROLLBACK_SHA: 'c06a9e4107fc259f45d32d1f0767e5e2b5d1d872'
 
@@ -113,7 +113,7 @@ jobs:
           paper=26.2.build.121-stable
           plexoncore=2.0.4
           config_schema=1
-          database_schema=1
+          database_schema=2
           runtime_certification=NOT_EXECUTED
           EOF
 
