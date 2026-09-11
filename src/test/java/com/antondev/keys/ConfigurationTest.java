@@ -76,12 +76,12 @@ class ConfigurationTest extends PluginTestBase {
         long beforeTasks = pluginOwnedPendingTasks();
 
         assertThrows(IllegalStateException.class, () -> {
-            plugin.configuration().set("core-runtime.mode", "CORE");
+            plugin.configuration().update(c -> c.set("core-runtime.mode", "CORE"));
             plugin.settingsChanged();
         });
 
-        assertSame(beforeSettings, plugin.settings(), "failed in-game mutation must restore last-good settings");
-        assertEquals(beforeDisk, Files.readString(file), "failed in-game mutation must restore exact config.yml bytes");
+        assertSame(beforeSettings, plugin.settings(), "failed internal mutation must restore last-good settings");
+        assertEquals(beforeDisk, Files.readString(file), "failed internal mutation must restore exact config.yml bytes");
         assertTrue(plugin.configuration().revision() >= beforeRevision + 2,
                 "candidate + rollback must keep revision monotonic");
         assertEquals(beforeTasks, pluginOwnedPendingTasks(), "rollback must leave exactly the prior checkpoint schedule");
