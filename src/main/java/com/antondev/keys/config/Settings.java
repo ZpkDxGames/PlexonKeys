@@ -9,7 +9,8 @@ import org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason;
 import org.bukkit.inventory.ItemStack;
 
 /** Parsed once per edit/reload. All frequent eligibility checks use sets and primitive values. */
-public record Settings(YamlConfiguration yaml, Text text, boolean enabled, long cap, int checkpointSeconds,
+public record Settings(YamlConfiguration yaml, Text text, boolean enabled, long cap,
+        boolean checkpointsEnabled, int checkpointSeconds,
         Set<String> worlds, Set<String> excludedWorlds, Set<GameMode> gameModes, boolean highestOnly,
         Map<KeyTier, Category> categories, Map<Activity, Task> tasks,
         boolean trackGrowth, boolean trackFormation, boolean openWater, boolean requireDrops,
@@ -27,8 +28,16 @@ public record Settings(YamlConfiguration yaml, Text text, boolean enabled, long 
         if (c.getInt("config-version") != 1) throw new IllegalArgumentException("Unsupported config-version");
         validateTypes(c);
         long cap = integer(c, "settings.max-virtual-per-category", 1, 1_000_000_000);
-        int checkpoint = (int) integer(c, "storage.checkpoint-seconds", 0, 86400);
-        if (checkpoint > 0 && checkpoint < 60) throw new IllegalArgumentException("storage.checkpoint-seconds must be 0 or at least 60");
+        Object enabledRaw = c.get("storage.checkpoints.enabled");
+        if (!(enabledRaw instanceof Boolean)) throw new IllegalArgumentException("storage.checkpoints.enabled must be boolean");
+        boolean checkpointsEnabled = (Boolean) enabledRaw;
+        int configuredCheckpoint = (int) integer(c, "storage.checkpoint-seconds", 0, 86400);
+        if (configuredCheckpoint > 0 && configuredCheckpoint < 60) {
+            throw new IllegalArgumentException("storage.checkpoint-seconds must be 0 or at least 60");
+        }
+        // Legacy zero meant shutdown-only. With the Phase 3 explicit switch inherited as enabled, zero safely
+        // migrates to 60 seconds. Administrators can still opt out intentionally with checkpoints.enabled=false.
+        int checkpoint = checkpointsEnabled && configuredCheckpoint == 0 ? 60 : configuredCheckpoint;
         var games = enums(c, "settings.allowed-game-modes", GameMode.class);
         if (games.isEmpty()) throw new IllegalArgumentException("settings.allowed-game-modes cannot be empty");
         String mode = c.getString("settings.roll-mode", "INDEPENDENT").toUpperCase(Locale.ROOT);
@@ -61,7 +70,7 @@ public record Settings(YamlConfiguration yaml, Text text, boolean enabled, long 
         number(c, "notifications.sound-volume", 0, 10); number(c, "notifications.sound-pitch", 0, 2);
         String sound = c.getString("notifications.sound", "");
         if (!sound.isBlank() && NamespacedKey.fromString(sound) == null) throw new IllegalArgumentException("notifications.sound must be a valid namespaced sound key");
-        return new Settings(c, new Text(c), c.getBoolean("settings.enabled"), cap, checkpoint,
+        return new Settings(c, new Text(c), c.getBoolean("settings.enabled"), cap, checkpointsEnabled, checkpoint,
                 lower(c.getStringList("settings.worlds")), lower(c.getStringList("settings.excluded-worlds")), games, mode.equals("HIGHEST_ONLY"),
                 Map.copyOf(categories), Map.copyOf(tasks), c.getBoolean("tracking.exclude-grown-blocks"), c.getBoolean("tracking.exclude-formed-blocks"),
                 c.getBoolean("activities.fishing.require-open-water"), c.getBoolean("activities.mining.require-drops"),

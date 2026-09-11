@@ -1,7 +1,10 @@
 package com.antondev.keys.command;
 
 import com.antondev.keys.PlexonKeys;
+import com.antondev.keys.activity.ProvenancePolicy;
+import com.antondev.keys.api.AcquisitionPreview;
 import com.antondev.keys.config.Text;
+import com.antondev.keys.diagnostics.Phase2Diagnostics;
 import com.antondev.keys.model.*;
 import java.util.*;
 import java.util.stream.Stream;
@@ -43,7 +46,12 @@ public final class KeysCommand implements CommandExecutor, TabCompleter {
                 case "reload" -> plugin.reloadFor(sender);
                 case "save" -> plugin.saveData(sender);
                 case "status" -> text().send(sender, "status", plugin.statusTags());
-                case "diagnostics" -> plugin.diagnostics(sender);
+                case "diagnostics" -> {
+                    plugin.diagnostics(sender);
+                    Phase2Diagnostics.append(plugin, sender);
+                }
+                case "definitions" -> definitions(sender);
+                case "dryrun" -> dryRun(sender, args);
                 case "chances" -> {
                     if (args.length > 3) { text().send(sender, "admin-help"); break; }
                     if (!(sender instanceof Player player)) { text().send(sender, "players-only"); break; }
@@ -85,6 +93,38 @@ public final class KeysCommand implements CommandExecutor, TabCompleter {
             plugin.configError(sender, error);
         }
         return true;
+    }
+
+    private void definitions(CommandSender sender) {
+        sender.sendMessage("§8[PlexonKeys] §7Stable key definitions:");
+        for (KeyTier tier : KeyTier.values()) {
+            var category = plugin.settings().categories().get(tier);
+            sender.sendMessage("§8 - §f" + tier.id() + " §7enabled=§f" + category.enabled()
+                    + " §7permission=§f" + (category.permission().isBlank() ? "<none>" : category.permission())
+                    + " §7physical=§f" + plugin.settings().yaml().getString("categories." + tier.id() + ".item.mode", "CONFIG"));
+        }
+    }
+
+    private void dryRun(CommandSender sender, String[] args) {
+        if (args.length != 5) {
+            sender.sendMessage("§cUsage: /keysadmin dryrun <online-player> <key> <activity> <origin>");
+            return;
+        }
+        Player target = Bukkit.getPlayerExact(args[1]);
+        if (target == null) {
+            sender.sendMessage("§cDry-run requires an online player context.");
+            return;
+        }
+        KeyTier tier = tier(sender, args[2]);
+        if (tier == null) return;
+        Activity activity = Activity.parse(args[3]);
+        ProvenancePolicy.Origin origin = ProvenancePolicy.Origin.parse(args[4]);
+        AcquisitionPreview preview = plugin.rewards().preview(target, tier, activity, origin);
+        sender.sendMessage("§8[PlexonKeys DryRun] §7player=§f" + target.getName()
+                + " §7key=§f" + preview.keyId() + " §7activity=§f" + preview.activity().id()
+                + " §7origin=§f" + preview.origin() + " §7eligible=§f" + preview.eligible()
+                + " §7chance=§f" + String.format(Locale.ROOT, "%.6f%%", preview.chancePercent())
+                + " §7balance=§f" + preview.currentBalance() + " §7reason=§f" + preview.reason());
     }
 
     private void change(CommandSender sender, String path, String value) throws Exception {
@@ -146,7 +186,7 @@ public final class KeysCommand implements CommandExecutor, TabCompleter {
         if (admin && !sender.hasPermission("plexonkeys.admin")) return List.of();
         if (!admin && !sender.hasPermission("plexonkeys.use")) return List.of();
         if (args.length == 1) options.addAll(admin
-                ? List.of("help", "setitem", "chances", "chance", "give", "take", "setbalance", "balance", "set", "reload", "save", "status", "diagnostics")
+                ? List.of("help", "setitem", "chances", "chance", "give", "take", "setbalance", "balance", "set", "reload", "save", "status", "diagnostics", "definitions", "dryrun")
                 : List.of("claim"));
         if (!admin && args.length == 1 && sender.hasPermission("plexonkeys.admin")) options.add("admin");
         if (args.length == 2 && ((!admin && args[0].equalsIgnoreCase("claim"))
@@ -157,6 +197,9 @@ public final class KeysCommand implements CommandExecutor, TabCompleter {
         if (admin && args.length == 2 && Set.of("give", "take", "setbalance", "balance").contains(args[0].toLowerCase(Locale.ROOT))) {
             Stream.concat(Bukkit.getOnlinePlayers().stream().map(Player::getName), plugin.data().names().stream())
                     .distinct().limit(1000).forEach(options::add);
+        }
+        if (admin && args.length == 2 && args[0].equalsIgnoreCase("dryrun")) {
+            Bukkit.getOnlinePlayers().stream().map(Player::getName).forEach(options::add);
         }
         if (admin && args.length == 2 && args[0].equalsIgnoreCase("set")) {
             plugin.settings().yaml().getKeys(true).stream()
@@ -169,6 +212,15 @@ public final class KeysCommand implements CommandExecutor, TabCompleter {
         }
         if (admin && args.length == 3 && Set.of("give", "take", "setbalance").contains(args[0].toLowerCase(Locale.ROOT))) {
             Arrays.stream(KeyTier.values()).map(KeyTier::id).forEach(options::add);
+        }
+        if (admin && args.length == 3 && args[0].equalsIgnoreCase("dryrun")) {
+            Arrays.stream(KeyTier.values()).map(KeyTier::id).forEach(options::add);
+        }
+        if (admin && args.length == 4 && args[0].equalsIgnoreCase("dryrun")) {
+            Arrays.stream(Activity.values()).map(Activity::id).forEach(options::add);
+        }
+        if (admin && args.length == 5 && args[0].equalsIgnoreCase("dryrun")) {
+            Arrays.stream(ProvenancePolicy.Origin.values()).map(v -> v.name().toLowerCase(Locale.ROOT)).forEach(options::add);
         }
         String prefix = args.length == 0 ? "" : args[args.length - 1].toLowerCase(Locale.ROOT);
         return options.stream().filter(value -> value.toLowerCase(Locale.ROOT).startsWith(prefix)).toList();

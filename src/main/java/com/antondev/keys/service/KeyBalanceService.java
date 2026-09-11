@@ -1,8 +1,10 @@
 package com.antondev.keys.service;
 
 import com.antondev.keys.PlexonKeys;
+import com.antondev.keys.api.KeyConsumeResult;
 import com.antondev.keys.api.KeySource;
 import com.antondev.keys.data.MemoryStore;
+import com.antondev.keys.event.PlexonKeyConsumedEvent;
 import com.antondev.keys.event.PlexonKeyEarnedEvent;
 import com.antondev.keys.model.KeyTier;
 import java.util.Map;
@@ -84,6 +86,44 @@ public final class KeyBalanceService {
         data.set(requirePlayerId(playerId), Objects.requireNonNull(tier, "tier"), amount);
     }
 
+    /**
+     * Crash-durable exact-once virtual consume boundary for crate/opening integrations. The debit and the
+     * bounded transaction-id replay record are committed in one SQLite transaction before SUCCESS returns.
+     */
+    public synchronized KeyConsumeResult consume(UUID playerId, KeyTier tier, long amount, String transactionId) {
+        UUID id = requirePlayerId(playerId);
+        KeyTier keyTier = Objects.requireNonNull(tier, "tier");
+        validatePositive(amount);
+        if (transactionId == null || transactionId.isBlank() || transactionId.length() > 128) {
+            throw new IllegalArgumentException("transactionId must contain 1-128 characters");
+        }
+
+        MemoryStore.ConsumeMutation mutation = data.consume(id, keyTier, amount, transactionId);
+        if (mutation.duplicate()) {
+            // A duplicate can still be dirty only when an earlier durability barrier failed. Retrying the same
+            // request is allowed to finish that pending commit, but can never debit a second time.
+            if (data.consumeReplayDirty(transactionId)) plugin.persistCriticalState("consume retry " + transactionId);
+            return new KeyConsumeResult(KeyConsumeResult.Status.DUPLICATE, transactionId, keyTier.id(), amount,
+                    0, data.balance(id, keyTier));
+        }
+
+        // This barrier is intentionally not used by block/reward hot paths. It serializes through the existing
+        // single bounded database worker and returns only after the account + replay record commit succeeds.
+        plugin.persistCriticalState("consume " + transactionId);
+        if (!mutation.success()) {
+            return new KeyConsumeResult(KeyConsumeResult.Status.INSUFFICIENT, transactionId,
+                    keyTier.id(), amount, 0, data.balance(id, keyTier));
+        }
+
+        long current = data.balance(id, keyTier);
+        KeyConsumeResult result = new KeyConsumeResult(KeyConsumeResult.Status.SUCCESS, transactionId,
+                keyTier.id(), amount, amount, current);
+        publishConsumed(id, keyTier, amount, transactionId);
+        return result;
+    }
+
+    public synchronized int consumeReplayGuardSize() { return data.consumeReplayCount(); }
+
     /** Atomic pre-delivery claim debit. Never emits an earned event. */
     public boolean debitForClaim(UUID playerId, Map<KeyTier, Long> amounts) {
         return data.debit(requirePlayerId(playerId), Objects.requireNonNull(amounts, "amounts"));
@@ -100,8 +140,15 @@ public final class KeyBalanceService {
         try {
             Bukkit.getPluginManager().callEvent(event);
         } catch (RuntimeException error) {
-            // State is already committed. Listener failure must never undo or duplicate the acquisition.
             plugin.getLogger().log(Level.WARNING, "A PlexonKeyEarnedEvent listener failed after key credit committed", error);
+        }
+    }
+
+    private void publishConsumed(UUID playerId, KeyTier tier, long amount, String transactionId) {
+        try {
+            Bukkit.getPluginManager().callEvent(new PlexonKeyConsumedEvent(playerId, tier, amount, transactionId));
+        } catch (RuntimeException error) {
+            plugin.getLogger().log(Level.WARNING, "A PlexonKeyConsumedEvent listener failed after key debit committed", error);
         }
     }
 

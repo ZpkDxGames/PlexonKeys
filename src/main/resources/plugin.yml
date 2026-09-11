@@ -2,17 +2,17 @@ name: PlexonKeys
 version: '${project.version}'
 main: com.antondev.keys.PlexonKeys
 api-version: '26.2'
-description: Activity rewards, virtual keys, and complete admin customization for Plexon.
+description: Premium key identity, acquisition provenance, virtual balances, physical claims, and integrations for Plexon.
 author: Tonim (ZpkDxGames)
 website: https://github.com/ZpkDxGames/PlexonKeys
-softdepend: [PlexonCore, Vault]
+softdepend: [PlexonCore, Vault, PlaceholderAPI, PlexonSpawners, PlexonCrates]
 commands:
   keys:
     description: Open your virtual key collection.
     usage: /keys [claim <category|all>]
     aliases: [plexonkeys]
   keysadmin:
-    description: Configure and manage PlexonKeys.
+    description: Configure, inspect, diagnose, and manage PlexonKeys.
     usage: /keysadmin help
     aliases: [pkeys, pka]
 permissions:

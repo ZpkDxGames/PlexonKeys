@@ -104,8 +104,8 @@ public class PlexonKeys extends JavaPlugin implements Listener {
             getLogger().info("PlexonKeys " + getPluginMeta().getVersion() + " by Tonim (ZpkDxGames) enabled. "
                     + data.playerCount() + " players, " + data.blockCount() + " tracked blocks."
                     + " Mode=" + runtimeMode() + " Blocks=" + blockOwnership);
-            if (settings().checkpointSeconds() == 0) {
-                getLogger().warning("Shutdown-only data saving is enabled. Forced crashes can lose progress or replay claims. Use /keysadmin save or enable checkpoints.");
+            if (!settings().checkpointsEnabled()) {
+                getLogger().warning("Periodic checkpoints are explicitly disabled. Forced crashes can lose ordinary reward/provenance progress; critical consume/claim barriers remain enabled.");
             }
             if (settings().categories().keySet().stream().anyMatch(t -> settings().yaml()
                     .getString("categories." + t.id() + ".item.mode", "").equalsIgnoreCase("CONFIG"))) {
@@ -341,7 +341,7 @@ public class PlexonKeys extends JavaPlugin implements Listener {
             checkpoint = null;
         }
         pressureProbe = 0;
-        if (settings().checkpointSeconds() > 0) {
+        if (settings().checkpointsEnabled()) {
             long ticks = settings().checkpointSeconds() * 20L;
             checkpoint = Bukkit.getScheduler().runTaskTimer(this, () -> {
                 if (data.dirtyCount() > 0) saver.save();
@@ -360,6 +360,19 @@ public class PlexonKeys extends JavaPlugin implements Listener {
         pressureProbe = 0;
         int threshold = clamp(settings().yaml().getInt("storage.pressure-dirty-threshold", 2048), 0, 10_000_000);
         if (threshold > 0 && data.dirtyCount() >= threshold) saver.save();
+    }
+
+    /** Critical low-frequency durability barrier; all actual SQLite work remains on DataSaver's single worker. */
+    public DataSaver.Result persistCriticalState(String reason) {
+        Objects.requireNonNull(reason, "reason");
+        if (reason.isBlank()) throw new IllegalArgumentException("reason must not be blank");
+        if (saver == null) throw new IllegalStateException("PlexonKeys persistence is unavailable");
+        try {
+            return saver.saveAndWait();
+        } catch (RuntimeException error) {
+            getLogger().log(Level.SEVERE, "Critical PlexonKeys persistence barrier failed: " + reason, error);
+            throw error;
+        }
     }
 
     private static int clamp(int value, int minimum, int maximum) {
@@ -417,9 +430,12 @@ public class PlexonKeys extends JavaPlugin implements Listener {
         sender.sendMessage("§7Runtime mode / epoch: §f" + runtimeMode() + " / " + runtimeEpoch);
         sender.sendMessage("§7Activity ownership: §fMINING=" + blockOwnership + ", LOGGING=" + blockOwnership + ", FISHING=LOCAL, MOBS=LOCAL");
         sender.sendMessage("§7Module: §f" + (core == null ? "NOT_INSTALLED" : core.registrationState()));
-        sender.sendMessage("§7SQLite: §f" + (saver == null ? "UNAVAILABLE" : "READY"));
+        sender.sendMessage("§7SQLite: §f" + (saver == null ? "UNAVAILABLE" : "READY / schema " + SqliteStore.SCHEMA_VERSION));
+        sender.sendMessage("§7Persistence mode: §fASYNC_DELTA_CHECKPOINTS + CRITICAL_COMMIT_BARRIERS");
         sender.sendMessage("§7Players / tracked blocks: §f" + data.playerCount() + " / " + data.blockCount());
-        sender.sendMessage("§7Dirty accounts / blocks: §f" + data.dirtyAccounts() + " / " + data.dirtyBlocks());
+        sender.sendMessage("§7Dirty accounts / blocks / replay: §f" + data.dirtyAccounts() + " / " + data.dirtyBlocks() + " / " + data.dirtyConsumes());
+        sender.sendMessage("§7Replay records / limit / retention: §f" + data.consumeReplayCount() + " / "
+                + MemoryStore.MAX_CONSUME_REPLAY_RECORDS + " / 7 days");
         sender.sendMessage("§7Provenance provider: §f" + (coreBlocksOwned ? "CORE + KEYS_DERIVED_OVERLAY" : "LOCAL"));
         sender.sendMessage("§7Provenance worlds / largest batch: §f" + provenance.perWorld().size() + " / " + provenance.largestBatch());
         sender.sendMessage("§7Provenance mark / unmark / move per sec: §f" + rate(provenance.marksPerSecond())
@@ -428,7 +444,7 @@ public class PlexonKeys extends JavaPlugin implements Listener {
                 + " / " + coreArtificial.get() + " / " + coreUnknown.get());
         sender.sendMessage("§7Core material/drop rejects / reward attempts: §f" + coreMaterialRejected.get() + " / "
                 + coreDropRejected.get() + " / " + coreRewardAttempts.get());
-        sender.sendMessage("§7Checkpoint seconds: §f" + settings().checkpointSeconds());
+        sender.sendMessage("§7Checkpoint enabled / seconds: §f" + settings().checkpointsEnabled() + " / " + settings().checkpointSeconds());
         sender.sendMessage("§7Vault economy: §f" + economy.name());
         sender.sendMessage("§7PlexonKeysAPI: §f" + (apiRegistered ? "REGISTERED" : "UNAVAILABLE"));
         sender.sendMessage("§7Earn event: §fcom.antondev.keys.event.PlexonKeyEarnedEvent");
@@ -440,7 +456,10 @@ public class PlexonKeys extends JavaPlugin implements Listener {
                 + reward.capRejects() + " / " + reward.permissionRejects());
         if (storage != null) {
             sender.sendMessage("§7Save in flight / requested: §f" + storage.inFlight() + " / " + storage.saveRequested());
-            sender.sendMessage("§7Storage revision requested / ack: §f" + storage.requestedRevision() + " / " + storage.acknowledgedRevision());
+            sender.sendMessage("§7Storage revision current / requested / ack: §f" + data.revision() + " / "
+                    + storage.requestedRevision() + " / " + storage.acknowledgedRevision());
+            sender.sendMessage("§7Persistence queue depth / high-water / capacity: §f" + storage.queueDepth() + " / "
+                    + storage.queueHighWaterMark() + " / " + storage.queueCapacity());
             sender.sendMessage("§7Last snapshot / DB / save ms: §f" + storage.lastSnapshotMilliseconds()
                     + " / " + storage.lastDatabaseMilliseconds() + " / " + storage.lastSaveMilliseconds());
             sender.sendMessage("§7P95 save ms / max dirty / batch cap: §f" + storage.p95SaveMilliseconds() + " / "
@@ -449,6 +468,8 @@ public class PlexonKeys extends JavaPlugin implements Listener {
                     + " / " + storage.saveFailures());
             sender.sendMessage("§7Last successful save: §f" + (storage.lastSuccessfulSaveEpochMillis() == 0
                     ? "never" : java.time.Instant.ofEpochMilli(storage.lastSuccessfulSaveEpochMillis())));
+            sender.sendMessage("§7Last failed save: §f" + (storage.lastFailedSaveEpochMillis() == 0
+                    ? "never" : java.time.Instant.ofEpochMilli(storage.lastFailedSaveEpochMillis())));
         }
         if (coreRuntime != null && !coreRuntime.detail().isBlank()) sender.sendMessage("§7Core Runtime detail: §f" + coreRuntime.detail());
         if (core != null && !core.detail().isBlank()) sender.sendMessage("§7Core detail: §f" + core.detail());

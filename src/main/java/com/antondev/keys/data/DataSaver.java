@@ -6,6 +6,8 @@ import java.util.logging.*;
 
 /** One bounded database worker with revision-aware save coalescing. */
 public final class DataSaver implements AutoCloseable {
+    private static final int QUEUE_CAPACITY = 1;
+
     public record Result(int players, int blocks, long milliseconds) {}
 
     public record Metrics(
@@ -22,7 +24,11 @@ public final class DataSaver implements AutoCloseable {
             long maximumDirtyCount,
             int maximumSnapshotRecords,
             long lastSuccessfulSaveEpochMillis,
-            long saveFailures) {}
+            long lastFailedSaveEpochMillis,
+            long saveFailures,
+            int queueDepth,
+            int queueHighWaterMark,
+            int queueCapacity) {}
 
     private final SqliteStore database;
     private final MemoryStore memory;
@@ -42,6 +48,8 @@ public final class DataSaver implements AutoCloseable {
     private volatile int maximumSnapshotRecords = 4096;
     private volatile int shutdownTimeoutSeconds = 15;
     private volatile long lastSuccessfulSaveEpochMillis;
+    private volatile long lastFailedSaveEpochMillis;
+    private volatile int queueHighWaterMark;
     private long maximumDirtyCount;
     private int recentSaveCount;
     private int recentSaveCursor;
@@ -53,7 +61,7 @@ public final class DataSaver implements AutoCloseable {
         this.logger = logger;
         worker = new ThreadPoolExecutor(
                 1, 1, 0L, TimeUnit.MILLISECONDS,
-                new ArrayBlockingQueue<>(1),
+                new ArrayBlockingQueue<>(QUEUE_CAPACITY),
                 runnable -> {
                     Thread thread = new Thread(runnable, "PlexonKeys-database");
                     thread.setDaemon(false);
@@ -76,7 +84,7 @@ public final class DataSaver implements AutoCloseable {
     /**
      * Request persistence through the current memory revision. Repeated requests extend the same in-flight
      * worker pass instead of adding executor tasks, so queue depth cannot grow with checkpoint frequency.
-     * Each caller still receives its own completion handle to preserve the 1.2 manual-save contract.
+     * Each caller still receives its own completion handle to preserve the manual-save contract.
      */
     public synchronized CompletableFuture<Result> save() {
         if (closing) return CompletableFuture.failedFuture(new IllegalStateException("DataSaver is closing"));
@@ -93,10 +101,22 @@ public final class DataSaver implements AutoCloseable {
         requestedRevision = current;
         try {
             pending = CompletableFuture.supplyAsync(this::drainRequestedRevisions, worker);
+            queueHighWaterMark = Math.max(queueHighWaterMark, worker.getQueue().size());
         } catch (RejectedExecutionException error) {
             return CompletableFuture.failedFuture(error);
         }
         return pending;
+    }
+
+    /**
+     * Durability barrier for low-frequency irreversible operations such as external transaction consumes
+     * and physical key delivery. It still runs all SQLite work on the one bounded database worker.
+     */
+    public Result saveAndWait() {
+        if (Thread.currentThread().getName().equals("PlexonKeys-database")) {
+            throw new IllegalStateException("Cannot wait for PlexonKeys persistence from its database worker");
+        }
+        return await(save(), shutdownTimeoutSeconds, "critical database save");
     }
 
     private Result drainRequestedRevisions() {
@@ -128,6 +148,7 @@ public final class DataSaver implements AutoCloseable {
                     database.save(snapshot);
                 } catch (Exception error) {
                     saveFailures++;
+                    lastFailedSaveEpochMillis = System.currentTimeMillis();
                     logger.log(Level.SEVERE, "PlexonKeys data save failed. Changes remain in memory for the next save.", error);
                     throw new CompletionException(error);
                 } finally {
@@ -171,7 +192,11 @@ public final class DataSaver implements AutoCloseable {
                 maximumDirtyCount,
                 maximumSnapshotRecords,
                 lastSuccessfulSaveEpochMillis,
-                saveFailures);
+                lastFailedSaveEpochMillis,
+                saveFailures,
+                worker.getQueue().size(),
+                queueHighWaterMark,
+                QUEUE_CAPACITY);
     }
 
     private long p95SaveMilliseconds() {
@@ -186,20 +211,26 @@ public final class DataSaver implements AutoCloseable {
         return TimeUnit.NANOSECONDS.toMillis(nanos);
     }
 
+    private static Result await(CompletableFuture<Result> future, int timeout, String operation) {
+        try {
+            return future.get(timeout, TimeUnit.SECONDS);
+        } catch (TimeoutException error) {
+            throw new IllegalStateException("PlexonKeys " + operation + " exceeded " + timeout + " seconds", error);
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while waiting for PlexonKeys " + operation, error);
+        } catch (ExecutionException error) {
+            throw new IllegalStateException("PlexonKeys " + operation + " failed", error.getCause());
+        }
+    }
+
     @Override public void close() {
         CompletableFuture<Result> finalSave = save();
         int timeout = shutdownTimeoutSeconds;
         try {
-            Result result = finalSave.get(timeout, TimeUnit.SECONDS);
+            Result result = await(finalSave, timeout, "final database save");
             logger.info("Saved " + result.players() + " player records and " + result.blocks()
                     + " block changes in " + result.milliseconds() + "ms.");
-        } catch (TimeoutException error) {
-            throw new IllegalStateException("PlexonKeys final database save exceeded " + timeout + " seconds", error);
-        } catch (InterruptedException error) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("Interrupted while waiting for PlexonKeys final database save", error);
-        } catch (ExecutionException error) {
-            throw new IllegalStateException("PlexonKeys final database save failed", error.getCause());
         } finally {
             synchronized (this) { closing = true; }
             worker.shutdown();

@@ -1,36 +1,10 @@
-# PlexonKeys 1.3.0 Public API
+# PlexonKeys 2.0 Public API
 
-PlexonKeys 1.3.0 preserves the stable Bukkit service API and post-success Bukkit events introduced in 1.2.0. Integrations do not need access to `MemoryStore`, SQLite internals, GUI configuration, or persistence implementation details.
+The Bukkit service remains `com.antondev.keys.api.PlexonKeysAPI`. All calls must run on the primary server thread. Returned maps are immutable and returned physical templates are defensive copies.
 
 ## Compatibility
 
-The **1.2.x method and event surface is intentionally unchanged in 1.3.x**. Existing PlexonCrates/PlexonQuests integrations can continue using the same class names and accessors.
-
-## Lookup
-
-```java
-RegisteredServiceProvider<PlexonKeysAPI> registration =
-        Bukkit.getServicesManager().getRegistration(PlexonKeysAPI.class);
-if (registration == null) {
-    // PlexonKeys is not enabled or its API did not finish registering.
-    return;
-}
-PlexonKeysAPI keys = registration.getProvider();
-```
-
-Package:
-
-```text
-com.antondev.keys.api.PlexonKeysAPI
-```
-
-## Threading contract
-
-All `PlexonKeysAPI` methods in the 1.3.x line must be called on the primary server thread. Calls from another thread fail with `IllegalStateException`.
-
-This keeps Bukkit inventory/item access, balance mutation, and public event delivery deterministic. Plugins doing asynchronous work should schedule the PlexonKeys API call back onto the primary thread.
-
-## API surface
+The complete 1.x service surface is preserved for PlexonCrates and other existing integrations:
 
 ```java
 long balance(UUID playerId, KeyTier tier);
@@ -41,129 +15,51 @@ Optional<ItemStack> keyTemplate(KeyTier tier);
 boolean isTierEnabled(KeyTier tier);
 ```
 
-`balances` returns an immutable map. `keyTemplate` returns a defensive `ItemStack` copy preserving the configured/captured Paper item data.
+Stable tier IDs are `basic`, `rare`, `epic`, `legendary`. Display text is never identity.
 
-`grant` enforces the configured per-tier virtual balance cap and returns the amount actually credited. To preserve the post-success earned-event contract, `grant` requires the target player to be online; an offline target is rejected before mutation.
+## Phase 2 definitions
 
-`take` never lowers a balance below zero and returns the amount actually removed. Invalid or non-positive mutation amounts are rejected.
-
-1.3.0 internally performs balance mutations in a single authoritative account pass where possible; this is an implementation optimization and does not change public semantics.
-
-## KeySource
-
-```text
-ACTIVITY
-ADMIN
-API
-VOTE
-QUEST
-CRATE
-DAILY_REWARD
-OTHER
+```java
+Map<String, KeyDefinitionView> keyDefinitions();
+Optional<KeyDefinitionView> resolveKeyDefinition(String keyId);
 ```
 
-Machine-readable IDs are lower-case. Built-in activity rewards use:
+A `KeyDefinitionView` is immutable and includes stable ID, display text, permission, enabled/visible/claimable state, physical mode, crate mapping metadata and immutable acquisition chance values.
 
-```text
-activity:mining
-activity:logging
-activity:fishing
-activity:mobs
+## Exact-once virtual consume
+
+```java
+KeyConsumeResult consumeKey(UUID playerId, String keyId, long amount, String transactionId);
 ```
 
-## PlexonKeyEarnedEvent
+The operation is atomic at the PlexonKeys in-memory authority boundary. Result statuses are:
 
-Exact class:
+- `SUCCESS`: the full amount was debited exactly once;
+- `INSUFFICIENT`: nothing was debited;
+- `DUPLICATE`: this transaction ID was already processed and nothing is debited again.
 
-```text
-com.antondev.keys.event.PlexonKeyEarnedEvent
+A transaction ID reused with a different player/key/amount fails closed with `IllegalArgumentException`. The replay guard is bounded to 4096 process-local entries. This is sufficient to prevent normal duplicate/retry consumption inside one server process; a crate engine that requires crash-spanning reservation/refund guarantees must keep its own durable opening transaction journal.
+
+Successful consumes publish the synchronous, non-cancellable, post-commit `com.antondev.keys.event.PlexonKeyConsumedEvent` containing player UUID, tier, amount and transaction ID. Listener exceptions cannot roll back or duplicate an already committed debit.
+
+## Physical identity
+
+```java
+Optional<String> identifyPhysicalKey(ItemStack item);
 ```
 
-This is a non-cancellable, synchronous, post-success event. It fires only after the virtual balance actually increases. `amount` is the actual credited amount after cap enforcement.
+The candidate amount is normalized to one and compared against configured/captured templates with full Bukkit metadata/component equality (`ItemStack.isSimilar`). Name/lore/material alone do not authenticate. Captured third-party PDC/components are preserved and remain part of exact identity.
 
-Compatibility accessors include:
+The 2.0 RC deliberately does not inject new PlexonKeys PDC into legacy/frozen templates because PlexonCrates 5.0 RC consumes the existing exact template contract.
 
-```text
-getPlayer() / player()
-category() / getCategory()
-tier() / getTier()
-amount() / getAmount()
-source() / getSource()
-eventId() / getEventId()
-transactionId()
-```
+## Existing earned and claimed events
 
-`category()` returns the lower-case tier ID such as `basic`. `tier()` returns `KeyTier`.
+`PlexonKeyEarnedEvent` remains synchronous/post-success and fires only after positive balance credit. `PlexonKeyClaimedEvent` remains synchronous/post-success and fires only after virtual debit plus physical delivery commit. Their existing class names/accessors remain compatible.
 
-The event does not fire for failed chance rolls, disabled/permission-rejected tiers, zero credit, cap rejection, database load, checkpoints, take/set corrections, claim debit, or silent claim rollback restoration.
+## Acquisition provenance
 
-## PlexonKeyClaimedEvent
+Live block provenance remains owned by the existing PlexonCore/local block-origin path. Mob source classification can use PlexonSpawners through its optional service API; PlexonKeys does not expose mutable Spawners or persistence internals. `UNKNOWN` is conservatively ineligible unless explicitly opted in.
 
-Exact class:
+## PlaceholderAPI
 
-```text
-com.antondev.keys.event.PlexonKeyClaimedEvent
-```
-
-This is a non-cancellable, synchronous, post-success event. It fires only after both the virtual debit and physical inventory delivery have committed.
-
-Compatibility accessors include:
-
-```text
-getPlayer() / player()
-category() / getCategory()
-tier() / getTier()
-amount() / getAmount()
-source() / getSource()
-eventId() / getEventId()
-transactionId()
-```
-
-Normal player claims use:
-
-```text
-source = player-claim
-```
-
-## Claim-all IDs
-
-One claim operation creates one parent UUID transaction ID. Each delivered tier receives its own unique event ID:
-
-```text
-<transactionId>:basic
-<transactionId>:rare
-<transactionId>:epic
-<transactionId>:legendary
-```
-
-If Basic x3, Rare x2, and Epic x1 are delivered in one operation, PlexonKeys fires three claimed events with the same parent transaction ID and unique per-tier event IDs. Amounts always match quantities actually delivered.
-
-## Event failure isolation
-
-Earned events are published only after balance commit. Claimed events are published only after inventory delivery commit. If another plugin listener throws, PlexonKeys logs the listener failure but does not undo committed state, duplicate physical keys, or restore already-delivered balances.
-
-## Physical template identity
-
-`keyTemplate(KeyTier)` exposes the authoritative configured/captured template as a defensive copy. PlexonKeys does not intentionally reduce an external key to a material/name/lore triple. Captured Paper item metadata/data components remain part of the template.
-
-This is the supported integration path for PlexonCrates-style consumers that need an exact physical key template. Consumers should not parse PlexonKeys GUI/config internals.
-
-## PlexonQuests integration
-
-PlexonQuests can discover the two event classes reflectively. A successful Basic mining acquisition is exposed approximately as:
-
-```text
-key.category = basic
-key.source   = activity:mining
-amount       = 1
-```
-
-A successful physical claim is exposed approximately as:
-
-```text
-key.category = basic
-key.source   = player-claim
-amount       = actual delivered count
-```
-
-The non-empty event ID is suitable as the integration deduplication token. Event allocation/dispatch occurs only for authoritative successful mutations; failed awards and failed claims do not emit progress events.
+PlaceholderAPI is a separate optional integration. Its expansion only reads authoritative in-memory balances/config; it does not call SQLite. This means placeholder evaluation is not an alternative persistence/API mutation path.
