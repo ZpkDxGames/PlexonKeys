@@ -3,20 +3,20 @@ name: Release Candidate
 on:
   push:
     branches:
-      - 'release/2.0.0-rc.1'
+      - 'release/2.0.0-rc.2'
 
 permissions:
   contents: write
   pull-requests: read
 
 concurrency:
-  group: plexonkeys-2.0.0-rc.1
+  group: plexonkeys-2.0.0-rc.2
   cancel-in-progress: false
 
 env:
-  PLUGIN_VERSION: '2.0.0-rc.1'
-  RELEASE_TAG: 'v2.0.0-rc.1'
-  PHASE2_BRANCH: 'phase2/2.0.0-premium-key-provenance'
+  PLUGIN_VERSION: '2.0.0-rc.2'
+  RELEASE_TAG: 'v2.0.0-rc.2'
+  CANDIDATE_BRANCH: 'phase3/runtime-reliability'
   ROLLBACK_TAG: 'v1.4.1'
   ROLLBACK_SHA: 'c06a9e4107fc259f45d32d1f0767e5e2b5d1d872'
 
@@ -46,24 +46,24 @@ jobs:
           test "${GITHUB_REF_NAME}" = "release/${PLUGIN_VERSION}"
           test "$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version)" = "${PLUGIN_VERSION}"
           test -f "releases/${PLUGIN_VERSION}.md"
-          phase2_sha=$(git ls-remote origin "refs/heads/${PHASE2_BRANCH}" | cut -f1)
-          test -n "$phase2_sha"
-          test "$phase2_sha" = "$GITHUB_SHA"
+          candidate_sha=$(git ls-remote origin "refs/heads/${CANDIDATE_BRANCH}" | cut -f1)
+          test -n "$candidate_sha"
+          test "$candidate_sha" = "$GITHUB_SHA"
           if git ls-remote --exit-code --tags origin "refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
             echo "${RELEASE_TAG} already exists; refusing to move or replace an RC tag." >&2
             exit 1
           fi
-          gh pr list --head "$PHASE2_BRANCH" --base main --state open --json number,isDraft,headRefOid > target-pr.json
+          gh pr list --head "$CANDIDATE_BRANCH" --base main --state open --json number,isDraft,headRefOid > target-pr.json
           python3 - <<'PY'
           import json, os
           prs=json.load(open('target-pr.json', encoding='utf-8'))
           if len(prs) != 1:
-              raise SystemExit(f'Expected exactly one open Phase 2 PR, found {len(prs)}')
+              raise SystemExit(f'Expected exactly one open Phase 3 PR, found {len(prs)}')
           pr=prs[0]
           if not pr['isDraft']:
-              raise SystemExit('Phase 2 PR must remain draft')
+              raise SystemExit('Phase 3 PR must remain draft')
           if pr['headRefOid'] != os.environ['GITHUB_SHA']:
-              raise SystemExit('Phase 2 PR head does not match release candidate SHA')
+              raise SystemExit('Phase 3 PR head does not match release candidate SHA')
           with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as out:
               out.write(f"number={pr['number']}\n")
           PY
@@ -142,7 +142,7 @@ jobs:
           set -euo pipefail
           cat > target/PROVENANCE.txt <<EOF
           repository=ZpkDxGames/PlexonKeys
-          phase2_branch=${PHASE2_BRANCH}
+          candidate_branch=${CANDIDATE_BRANCH}
           release_branch=${GITHUB_REF_NAME}
           candidate_sha=${GITHUB_SHA}
           version=${PLUGIN_VERSION}
@@ -152,7 +152,7 @@ jobs:
           paper=26.2.build.121-stable
           plexoncore=2.0.4
           config_schema=1
-          database_schema=1
+          database_schema=2
           pr=${{ steps.pr.outputs.number }}
           pr_state=OPEN_DRAFT_UNMERGED
           runtime_certification=NOT_EXECUTED
@@ -210,9 +210,9 @@ jobs:
           import json, os
           pr=json.load(open('target/pr-after.json', encoding='utf-8'))
           if pr['state'] != 'OPEN' or not pr['isDraft'] or pr['mergedAt'] is not None:
-              raise SystemExit('Phase 2 PR is no longer OPEN / DRAFT / UNMERGED')
+              raise SystemExit('Phase 3 PR is no longer OPEN / DRAFT / UNMERGED')
           if pr['headRefOid'] != os.environ['GITHUB_SHA']:
-              raise SystemExit('Phase 2 PR moved after candidate verification')
+              raise SystemExit('Phase 3 PR moved after candidate verification')
           PY
           if gh release view "v2.0.0" >/dev/null 2>&1; then
             echo 'Stable v2.0.0 must remain unpublished.' >&2
