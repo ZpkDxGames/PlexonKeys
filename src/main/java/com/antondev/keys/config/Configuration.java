@@ -36,9 +36,13 @@ public final class Configuration {
     public Settings reload() throws Exception {
         String contents = Files.readString(file, StandardCharsets.UTF_8);
         var config = new YamlConfiguration();
-        config.loadFromString(contents); fillDefaults(config);
+        config.loadFromString(contents);
+        boolean migrated = migrateV1ToV2(config, contents);
+        fillDefaults(config);
         Settings next = Settings.parse(config);
-        commitCandidate(next, contents, false);
+        String effectiveContents = migrated ? config.saveToString() : contents;
+        if (migrated) writeAtomically(effectiveContents);
+        commitCandidate(next, effectiveContents, false);
         return next;
     }
 
@@ -97,6 +101,32 @@ public final class Configuration {
             try { Files.move(temp, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING); }
             catch (AtomicMoveNotSupportedException ignored) { Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING); }
         } finally { Files.deleteIfExists(temp); }
+    }
+
+    private boolean migrateV1ToV2(YamlConfiguration config, String originalContents) throws IOException {
+        int version = config.getInt("config-version", -1);
+        if (version != 1) return false;
+
+        Path backup = file.resolveSibling("config-pre-v2.yml");
+        if (!Files.exists(backup)) {
+            Files.writeString(backup, originalContents, StandardCharsets.UTF_8, StandardOpenOption.CREATE_NEW);
+        }
+
+        List<String> legacyWorlds = config.getStringList("settings.worlds");
+        config.set("settings.scope.mode", legacyWorlds.isEmpty() ? "ALL" : "ALLOWLIST");
+        if (!config.contains("storage.checkpoints.enabled")) config.set("storage.checkpoints.enabled", true);
+        if (!config.contains("core-runtime.mode")) config.set("core-runtime.mode", "AUTO");
+        if (!config.contains("core-runtime.activities.blocks")) config.set("core-runtime.activities.blocks", true);
+        if (!config.contains("integrations.spawners.allow-plexon-origin")) config.set("integrations.spawners.allow-plexon-origin", false);
+        if (!config.contains("integrations.spawners.allow-external-spawner-origin")) config.set("integrations.spawners.allow-external-spawner-origin", false);
+        if (!config.contains("integrations.spawners.allow-unknown-origin")) config.set("integrations.spawners.allow-unknown-origin", false);
+        for (KeyTier tier : KeyTier.values()) {
+            String path = "categories." + tier.id();
+            if (!config.contains(path + ".visible")) config.set(path + ".visible", true);
+            if (!config.contains(path + ".claimable")) config.set(path + ".claimable", true);
+        }
+        config.set("config-version", 2);
+        return true;
     }
 
     private void fillDefaults(YamlConfiguration config) {
