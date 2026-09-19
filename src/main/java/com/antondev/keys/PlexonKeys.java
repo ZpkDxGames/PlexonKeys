@@ -99,7 +99,10 @@ public class PlexonKeys extends JavaPlugin implements Listener {
             api = new PlexonKeysApiImpl(this, balances);
             Bukkit.getServicesManager().register(PlexonKeysAPI.class, api, this, ServicePriority.Normal);
 
-            Bukkit.getOnlinePlayers().forEach(player -> data.remember(player.getUniqueId(), player.getName()));
+            Bukkit.getOnlinePlayers().forEach(player -> {
+                data.remember(player.getUniqueId(), player.getName());
+                claims.recover(player);
+            });
             configureCheckpoint();
             warnEconomy();
             publishCoreHealth();
@@ -170,6 +173,7 @@ public class PlexonKeys extends JavaPlugin implements Listener {
 
     @EventHandler public void join(PlayerJoinEvent event) {
         data.remember(event.getPlayer().getUniqueId(), event.getPlayer().getName());
+        claims.recover(event.getPlayer());
     }
 
     /**
