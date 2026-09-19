@@ -403,19 +403,6 @@ public class PlexonKeys extends JavaPlugin implements Listener {
         if (threshold > 0 && data.dirtyCount() >= threshold) saver.save();
     }
 
-    /** Critical low-frequency durability barrier; all actual SQLite work remains on DataSaver's single worker. */
-    public DataSaver.Result persistCriticalState(String reason) {
-        Objects.requireNonNull(reason, "reason");
-        if (reason.isBlank()) throw new IllegalArgumentException("reason must not be blank");
-        if (saver == null) throw new IllegalStateException("PlexonKeys persistence is unavailable");
-        try {
-            return saver.saveAndWait();
-        } catch (RuntimeException error) {
-            getLogger().log(Level.SEVERE, "Critical PlexonKeys persistence barrier failed: " + reason, error);
-            throw error;
-        }
-    }
-
     private static int clamp(int value, int minimum, int maximum) {
         return Math.max(minimum, Math.min(maximum, value));
     }
