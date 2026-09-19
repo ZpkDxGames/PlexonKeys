@@ -4,6 +4,7 @@ import com.antondev.keys.model.KeyTier;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CompletionStage;
 import org.bukkit.inventory.ItemStack;
 
 /**
@@ -34,7 +35,20 @@ public interface PlexonKeysAPI {
      * Idempotent exact-once virtual-key consumption. A transaction ID is retained in a bounded in-memory
      * replay guard for this process lifetime; duplicate requests never debit twice.
      */
+    /**
+     * Legacy synchronous consume entry point. PlexonKeys 2.1 rejects persistence-sensitive synchronous
+     * mutation instead of blocking the primary thread; integrations must use consumeKeyAsync.
+     */
+    @Deprecated
     KeyConsumeResult consumeKey(UUID playerId, String keyId, long amount, String transactionId);
+
+    CompletionStage<KeyConsumeResult> consumeKeyAsync(
+            UUID playerId, String keyId, long amount, String transactionId);
+
+    CompletionStage<KeyGrantResult> grantKeyAsync(
+            UUID playerId, String keyId, long amount, KeySource source, String transactionId);
+
+    Optional<KeyTransactionView> transactionStatus(String transactionId);
 
     /** Resolve a physical item through exact Bukkit metadata/components equality, never through display text. */
     Optional<String> identifyPhysicalKey(ItemStack item);
