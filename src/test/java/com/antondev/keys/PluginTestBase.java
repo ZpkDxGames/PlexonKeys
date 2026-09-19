@@ -2,6 +2,7 @@ package com.antondev.keys;
 
 import com.antondev.keys.model.*;
 import org.bukkit.GameMode;
+import java.util.concurrent.*;
 import org.junit.jupiter.api.*;
 import org.mockbukkit.mockbukkit.*;
 import org.mockbukkit.mockbukkit.entity.PlayerMock;
@@ -24,6 +25,33 @@ abstract class PluginTestBase {
                 slot, type, type.isShiftClick() ? org.bukkit.event.inventory.InventoryAction.MOVE_TO_OTHER_INVENTORY : org.bukkit.event.inventory.InventoryAction.PICKUP_ALL);
         server.getPluginManager().callEvent(event); return event;
     }
+    protected <T> T await(java.util.concurrent.CompletionStage<T> stage) throws Exception {
+        CompletableFuture<T> future = stage.toCompletableFuture();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (!future.isDone() && System.nanoTime() < deadline) {
+            server.getScheduler().performOneTick();
+            Thread.sleep(5L);
+        }
+        server.getScheduler().performOneTick();
+        return future.get(1, TimeUnit.SECONDS);
+    }
+
+    protected void settleAsync() throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        int stable = 0;
+        while (System.nanoTime() < deadline) {
+            server.getScheduler().performOneTick();
+            boolean idle = plugin.transactions().metrics().pending() == 0 && plugin.data().dirtyClaims() == 0;
+            if (idle && ++stable >= 2) {
+                server.getScheduler().performOneTick();
+                return;
+            }
+            if (!idle) stable = 0;
+            Thread.sleep(5L);
+        }
+        fail("PlexonKeys async work did not settle within 5 seconds");
+    }
+
     protected void deterministic() throws Exception {
         plugin.configuration().update(c -> {
             for (KeyTier tier : KeyTier.values()) {

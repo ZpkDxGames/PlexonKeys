@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CompletionStage;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
@@ -81,10 +82,26 @@ public final class PlexonKeysApiImpl implements PlexonKeysAPI {
         }
     }
 
+    @Deprecated
     @Override public KeyConsumeResult consumeKey(UUID playerId, String keyId, long amount, String transactionId) {
-        requirePrimaryThread();
+        throw new IllegalStateException("PlexonKeys 2.1 does not allow synchronous durable consume; use consumeKeyAsync");
+    }
+
+    @Override public CompletionStage<KeyConsumeResult> consumeKeyAsync(
+            UUID playerId, String keyId, long amount, String transactionId) {
         KeyTier tier = KeyTier.parse(Objects.requireNonNull(keyId, "keyId"));
-        return balances.consume(playerId, tier, amount, transactionId);
+        return balances.consumeAsync(Objects.requireNonNull(playerId, "playerId"), tier, amount, transactionId);
+    }
+
+    @Override public CompletionStage<KeyGrantResult> grantKeyAsync(
+            UUID playerId, String keyId, long amount, KeySource source, String transactionId) {
+        KeyTier tier = KeyTier.parse(Objects.requireNonNull(keyId, "keyId"));
+        return balances.grantAsync(Objects.requireNonNull(playerId, "playerId"), tier, amount,
+                Objects.requireNonNull(source, "source"), transactionId);
+    }
+
+    @Override public Optional<KeyTransactionView> transactionStatus(String transactionId) {
+        return balances.transactionStatus(Objects.requireNonNull(transactionId, "transactionId"));
     }
 
     @Override public Optional<String> identifyPhysicalKey(ItemStack item) {
@@ -105,11 +122,9 @@ public final class PlexonKeysApiImpl implements PlexonKeysAPI {
         Settings.Category category = plugin.settings().categories().get(tier);
         String path = "categories." + tier.id();
         String mode = plugin.settings().yaml().getString(path + ".item.mode", "CONFIG").trim().toUpperCase(Locale.ROOT);
-        String crate = plugin.settings().yaml().getString("integrations.crates.mappings." + tier.id(), tier.id());
-        boolean visible = plugin.settings().yaml().getBoolean(path + ".visible", true);
-        boolean claimable = plugin.settings().yaml().getBoolean(path + ".claimable", true);
+        // crateMapping remains a binary-compatibility record component only. PlexonCrates is retired.
         return new KeyDefinitionView(tier.id(), category.display(), category.permission(), category.enabled(),
-                visible, claimable, mode, crate == null ? tier.id() : crate, category.chances());
+                category.visible(), category.claimable(), mode, tier.id(), category.chances());
     }
 
     private static void requirePrimaryThread() {

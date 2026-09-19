@@ -28,7 +28,9 @@ public final class DataSaver implements AutoCloseable {
             long saveFailures,
             int queueDepth,
             int queueHighWaterMark,
-            int queueCapacity) {}
+            int queueCapacity,
+            boolean writerHealthy,
+            String writerDetail) {}
 
     private final SqliteStore database;
     private final MemoryStore memory;
@@ -112,6 +114,10 @@ public final class DataSaver implements AutoCloseable {
      * Durability barrier for low-frequency irreversible operations such as external transaction consumes
      * and physical key delivery. It still runs all SQLite work on the one bounded database worker.
      */
+    /**
+     * Compatibility/testing helper only. First-party gameplay/API critical paths must never call this method.
+     */
+    @Deprecated
     public Result saveAndWait() {
         if (Thread.currentThread().getName().equals("PlexonKeys-database")) {
             throw new IllegalStateException("Cannot wait for PlexonKeys persistence from its database worker");
@@ -196,7 +202,9 @@ public final class DataSaver implements AutoCloseable {
                 saveFailures,
                 worker.getQueue().size(),
                 queueHighWaterMark,
-                QUEUE_CAPACITY);
+                QUEUE_CAPACITY,
+                database.writerHealthy(),
+                database.writerDetail());
     }
 
     private long p95SaveMilliseconds() {
@@ -239,6 +247,8 @@ public final class DataSaver implements AutoCloseable {
             } catch (InterruptedException error) {
                 Thread.currentThread().interrupt();
                 worker.shutdownNow();
+            } finally {
+                database.close();
             }
         }
     }

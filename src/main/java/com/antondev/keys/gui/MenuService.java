@@ -54,12 +54,15 @@ public final class MenuService implements Listener {
         Map<KeyTier, Long> balances = plugin.data().balances(player.getUniqueId());
         long total = 0;
         for (KeyTier tier : KeyTier.values()) {
+            var category = plugin.settings().categories().get(tier);
+            if (!category.visible()) continue;
             long balance = balances.getOrDefault(tier, 0L); total += balance;
             String base = "categories." + tier.id();
-            TagResolver[] tags = {Text.component("category", Text.parse(plugin.settings().categories().get(tier).display())), Text.value("balance", balance)};
+            TagResolver[] tags = {Text.component("category", Text.parse(category.display())), Text.value("balance", balance)};
             button(menu, config().getInt(base + ".menu.icon-slot"), base + ".menu", null, tags);
-            button(menu, config().getInt(base + ".menu.claim-slot"), balance > 0 ? "gui.player.claimable" : "gui.player.empty",
-                    click -> plugin.claims().claim(player, tier, click == ClickType.RIGHT), tags);
+            boolean claimable = category.claimable() && balance > 0;
+            button(menu, config().getInt(base + ".menu.claim-slot"), claimable ? "gui.player.claimable" : "gui.player.empty",
+                    claimable ? click -> plugin.claims().claim(player, tier, click == ClickType.RIGHT) : null, tags);
         }
         var totalTag = Text.value("total", total);
         button(menu, config().getInt("gui.player.summary.slot"), "gui.player.summary", null, totalTag);

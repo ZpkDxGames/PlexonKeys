@@ -112,7 +112,7 @@ class ConfigurationTest extends PluginTestBase {
         ItemStack restored = plugin.settings().categories().get(KeyTier.LEGENDARY).itemCopy();
         assertTrue(original.isSimilar(restored)); assertEquals(1, restored.getAmount());
         player.getInventory().clear(); plugin.data().set(player.getUniqueId(), KeyTier.LEGENDARY, 1);
-        plugin.claims().claim(player, KeyTier.LEGENDARY, false);
+        plugin.claims().claim(player, KeyTier.LEGENDARY, false); settleAsync();
         assertTrue(original.isSimilar(player.getInventory().getItem(0)));
     }
 
