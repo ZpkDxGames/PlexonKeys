@@ -14,6 +14,7 @@ import com.antondev.keys.listener.*;
 import com.antondev.keys.model.Activity;
 import com.antondev.keys.reward.*;
 import com.antondev.keys.service.KeyBalanceService;
+import com.antondev.keys.service.KeyTransactionCoordinator;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
@@ -31,6 +32,7 @@ public class PlexonKeys extends JavaPlugin implements Listener {
     private Configuration configuration;
     private MemoryStore data;
     private DataSaver saver;
+    private KeyTransactionCoordinator transactions;
     private EconomyBridge economy;
     private KeyBalanceService balances;
     private RewardService rewards;
@@ -69,8 +71,9 @@ public class PlexonKeys extends JavaPlugin implements Listener {
             data = database.load();
             saver = new DataSaver(database, data, getLogger());
             configureSaver();
+            transactions = new KeyTransactionCoordinator(data, saver);
             economy = new EconomyBridge(this);
-            balances = new KeyBalanceService(this, data);
+            balances = new KeyBalanceService(this, data, transactions);
             rewards = new RewardService(this);
             claims = new ClaimService(this);
             menus = new MenuService(this);
@@ -142,6 +145,10 @@ public class PlexonKeys extends JavaPlugin implements Listener {
             } catch (RuntimeException error) {
                 getLogger().log(Level.WARNING, "Could not close every menu; final database save will still run.", error);
             }
+        }
+        if (transactions != null) {
+            transactions.close();
+            transactions = null;
         }
         if (saver != null) {
             try {
@@ -533,6 +540,7 @@ public class PlexonKeys extends JavaPlugin implements Listener {
     public MemoryStore data() { return data; }
     public EconomyBridge economy() { return economy; }
     public KeyBalanceService balances() { return balances; }
+    public KeyTransactionCoordinator transactions() { return Objects.requireNonNull(transactions, "transaction coordinator unavailable"); }
     public RewardService rewards() { return rewards; }
     public ClaimService claims() { return claims; }
     public MenuService menus() { return menus; }
