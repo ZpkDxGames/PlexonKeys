@@ -12,20 +12,21 @@ import org.bukkit.Material;
 import org.bukkit.plugin.RegisteredServiceProvider;
 import org.bukkit.plugin.java.JavaPlugin;
 
-/** Loaded reflectively only when the installed Core advertises API 2. */
+/** PlexonCore 2.1 owner-scoped runtime integration. */
 public final class PlexonCore2RuntimeBridge implements CoreRuntimeBridge {
+    private final JavaPlugin owner;
     private final PlexonCoreAPI core;
 
     public PlexonCore2RuntimeBridge(JavaPlugin plugin) {
-        Objects.requireNonNull(plugin, "plugin");
+        owner = Objects.requireNonNull(plugin, "plugin");
         RegisteredServiceProvider<PlexonCoreAPI> registration = Bukkit.getServicesManager().getRegistration(PlexonCoreAPI.class);
         if (registration == null) throw new IllegalStateException("PlexonCore API service is not registered");
         core = registration.getProvider();
-        if (!core.supportsApi(2, 0)) throw new IllegalStateException("PlexonCore does not advertise API 2.0");
+        if (!core.supportsApi(2, 1)) throw new IllegalStateException("PlexonCore does not advertise API 2.1");
     }
 
     @Override public boolean available() { return true; }
-    @Override public String detail() { return "Core API " + core.version().apiVersion() + " block runtime ready"; }
+    @Override public String detail() { return "Core API " + core.version().apiVersion() + " owner-scoped block runtime ready"; }
 
     @Override
     public AutoCloseable subscribeBlocks(Set<Material> materials, Consumer<BlockFact> consumer) {
@@ -36,13 +37,12 @@ public final class PlexonCore2RuntimeBridge implements CoreRuntimeBridge {
                 .materials(materials)
                 .requiresNaturalOrigin(true)
                 .build();
-        return core.events().subscribeBlockBreak("keys", subscription, context -> consumer.accept(new BlockFact(
+        return core.events().subscribeBlockBreak(owner, "plexonkeys", subscription, context -> consumer.accept(new BlockFact(
                 context.eventId(), context.playerId(), context.worldId(), context.worldName(),
                 context.x(), context.y(), context.z(), context.material(), map(context.origin()), context.dropItems())));
     }
 
-    @Override
-    public Origin origin(UUID worldId, int x, int y, int z) {
+    @Override public Origin origin(UUID worldId, int x, int y, int z) {
         return map(core.blockOrigins().origin(worldId, x, y, z));
     }
 
