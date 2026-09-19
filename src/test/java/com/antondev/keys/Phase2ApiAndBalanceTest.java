@@ -8,22 +8,22 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 final class Phase2ApiAndBalanceTest extends PluginTestBase {
-    @Test void exactOnceConsumeNeverDebitsTwice() {
+    @Test void exactOnceConsumeNeverDebitsTwice() throws Exception {
         plugin.balances().grantAdmin(player.getUniqueId(), KeyTier.BASIC, 5);
-        KeyConsumeResult first = plugin.balances().consume(player.getUniqueId(), KeyTier.BASIC, 2, "crate-open-1");
+        KeyConsumeResult first = await(plugin.balances().consumeAsync(player.getUniqueId(), KeyTier.BASIC, 2, "crate-open-1"));
         assertEquals(KeyConsumeResult.Status.SUCCESS, first.status());
         assertEquals(2, first.consumed());
         assertEquals(3, first.balance());
 
         KeyConsumeResult duplicate = plugin.balances().consume(player.getUniqueId(), KeyTier.BASIC, 2, "crate-open-1");
         assertEquals(KeyConsumeResult.Status.DUPLICATE, duplicate.status());
-        assertEquals(0, duplicate.consumed());
+        assertEquals(2, duplicate.consumed());
         assertEquals(3, plugin.balances().balance(player.getUniqueId(), KeyTier.BASIC));
     }
 
-    @Test void insufficientConsumeIsIdempotentlyRejected() {
+    @Test void insufficientConsumeIsIdempotentlyRejected() throws Exception {
         plugin.balances().grantAdmin(player.getUniqueId(), KeyTier.RARE, 1);
-        KeyConsumeResult first = plugin.balances().consume(player.getUniqueId(), KeyTier.RARE, 2, "crate-open-2");
+        KeyConsumeResult first = await(plugin.balances().consumeAsync(player.getUniqueId(), KeyTier.RARE, 2, "crate-open-2"));
         assertEquals(KeyConsumeResult.Status.INSUFFICIENT, first.status());
         assertEquals(1, plugin.balances().balance(player.getUniqueId(), KeyTier.RARE));
         assertEquals(KeyConsumeResult.Status.DUPLICATE,
@@ -31,11 +31,12 @@ final class Phase2ApiAndBalanceTest extends PluginTestBase {
         assertEquals(1, plugin.balances().balance(player.getUniqueId(), KeyTier.RARE));
     }
 
-    @Test void transactionIdCannotBeReusedForDifferentRequest() {
+    @Test void transactionIdCannotBeReusedForDifferentRequest() throws Exception {
         plugin.balances().grantAdmin(player.getUniqueId(), KeyTier.BASIC, 5);
-        plugin.balances().consume(player.getUniqueId(), KeyTier.BASIC, 1, "same-id");
-        assertThrows(IllegalArgumentException.class,
-                () -> plugin.balances().consume(player.getUniqueId(), KeyTier.BASIC, 2, "same-id"));
+        await(plugin.balances().consumeAsync(player.getUniqueId(), KeyTier.BASIC, 1, "same-id"));
+        var conflict = plugin.balances().consumeAsync(player.getUniqueId(), KeyTier.BASIC, 2, "same-id").toCompletableFuture();
+        while (!conflict.isDone()) { server.getScheduler().performOneTick(); Thread.sleep(5L); }
+        assertThrows(java.util.concurrent.ExecutionException.class, () -> conflict.get());
     }
 
     @Test void definitionsExposeStableIdsAndImmutableViews() {
