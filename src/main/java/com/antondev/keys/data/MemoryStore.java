@@ -44,6 +44,76 @@ public final class MemoryStore {
 
     public record ConsumeMutation(boolean duplicate, boolean success, long balance) {}
 
+    public enum TransactionKind { CONSUME, EXTERNAL_GRANT }
+    public enum TransactionOutcome { SUCCESS, INSUFFICIENT }
+
+    /** Immutable durable request identity plus its logical result. Durability is represented by dirty state. */
+    public record KeyTransaction(
+            String transactionId,
+            TransactionKind kind,
+            UUID player,
+            KeyTier tier,
+            long requested,
+            long applied,
+            String source,
+            TransactionOutcome outcome,
+            long resultBalance,
+            long createdAtEpochMillis,
+            long updatedAtEpochMillis) {
+        public KeyTransaction {
+            if (transactionId == null || transactionId.isBlank() || transactionId.length() > 128) {
+                throw new IllegalArgumentException("transactionId must contain 1-128 characters");
+            }
+            Objects.requireNonNull(kind, "kind");
+            Objects.requireNonNull(player, "player");
+            Objects.requireNonNull(tier, "tier");
+            if (requested <= 0 || requested > HARD_LIMIT) throw new IllegalArgumentException("requested out of range");
+            if (applied < 0 || applied > requested) throw new IllegalArgumentException("applied out of range");
+            source = source == null ? "" : source;
+            Objects.requireNonNull(outcome, "outcome");
+            if (resultBalance < 0 || resultBalance > HARD_LIMIT) throw new IllegalArgumentException("resultBalance out of range");
+        }
+
+        public boolean sameRequest(TransactionKind expectedKind, UUID expectedPlayer, KeyTier expectedTier,
+                                   long expectedRequested, String expectedSource) {
+            return kind == expectedKind && player.equals(expectedPlayer) && tier == expectedTier
+                    && requested == expectedRequested && source.equals(expectedSource == null ? "" : expectedSource);
+        }
+    }
+
+    public record CriticalMutation(boolean duplicate, KeyTransaction transaction) {}
+
+    public enum ClaimState { RESERVED, DELIVERY_PENDING, COMPLETED, REFUNDED, UNCERTAIN }
+
+    /** Durable physical-delivery journal. */
+    public record ClaimRecord(
+            String transactionId,
+            UUID player,
+            Map<KeyTier, Long> amounts,
+            String deliveryData,
+            ClaimState state,
+            String beforeFingerprint,
+            String afterFingerprint,
+            long createdAtEpochMillis,
+            long updatedAtEpochMillis,
+            String detail) {
+        public ClaimRecord {
+            if (transactionId == null || transactionId.isBlank() || transactionId.length() > 128) {
+                throw new IllegalArgumentException("transactionId must contain 1-128 characters");
+            }
+            Objects.requireNonNull(player, "player");
+            amounts = Map.copyOf(Objects.requireNonNull(amounts, "amounts"));
+            if (amounts.isEmpty()) throw new IllegalArgumentException("claim amounts must not be empty");
+            deliveryData = Objects.requireNonNull(deliveryData, "deliveryData");
+            Objects.requireNonNull(state, "state");
+            beforeFingerprint = beforeFingerprint == null ? "" : beforeFingerprint;
+            afterFingerprint = afterFingerprint == null ? "" : afterFingerprint;
+            detail = detail == null ? "" : detail;
+        }
+
+        public boolean terminal() { return state == ClaimState.COMPLETED || state == ClaimState.REFUNDED; }
+    }
+
     public record ProvenanceMetrics(
             double seconds,
             long totalPositions,
@@ -72,26 +142,43 @@ public final class MemoryStore {
     public record Snapshot(
             Map<UUID, Versioned<Account>> accounts,
             Map<Position, Versioned<Boolean>> blocks,
-            Map<String, Versioned<ConsumeReplay>> consumes) {
+            Map<String, Versioned<ConsumeReplay>> consumes,
+            Map<String, Versioned<KeyTransaction>> transactions,
+            Map<String, Versioned<ClaimRecord>> claims) {
         public Snapshot {
             accounts = Map.copyOf(accounts);
             blocks = Map.copyOf(blocks);
             consumes = Map.copyOf(consumes);
+            transactions = Map.copyOf(transactions);
+            claims = Map.copyOf(claims);
         }
         public Snapshot(Map<UUID, Versioned<Account>> accounts, Map<Position, Versioned<Boolean>> blocks) {
-            this(accounts, blocks, Map.of());
+            this(accounts, blocks, Map.of(), Map.of(), Map.of());
         }
-        public boolean empty() { return accounts.isEmpty() && blocks.isEmpty() && consumes.isEmpty(); }
-        public int size() { return accounts.size() + blocks.size() + consumes.size(); }
+        public Snapshot(Map<UUID, Versioned<Account>> accounts, Map<Position, Versioned<Boolean>> blocks,
+                        Map<String, Versioned<ConsumeReplay>> consumes) {
+            this(accounts, blocks, consumes, Map.of(), Map.of());
+        }
+        public boolean empty() {
+            return accounts.isEmpty() && blocks.isEmpty() && consumes.isEmpty()
+                    && transactions.isEmpty() && claims.isEmpty();
+        }
+        public int size() {
+            return accounts.size() + blocks.size() + consumes.size() + transactions.size() + claims.size();
+        }
     }
 
     private final Map<UUID, Account> accounts = new HashMap<>();
     private final Map<String, UUID> playersByName = new HashMap<>();
     private final Map<UUID, Set<Long>> artificial = new HashMap<>();
     private final LinkedHashMap<String, ConsumeReplay> consumeReplays = new LinkedHashMap<>();
+    private final Map<String, KeyTransaction> transactions = new HashMap<>();
+    private final Map<String, ClaimRecord> claims = new HashMap<>();
     private final Map<UUID, Versioned<Account>> dirtyAccounts = new HashMap<>();
     private final Map<Position, Versioned<Boolean>> dirtyBlocks = new HashMap<>();
     private final LinkedHashMap<String, Versioned<ConsumeReplay>> dirtyConsumeReplays = new LinkedHashMap<>();
+    private final LinkedHashMap<String, Versioned<KeyTransaction>> dirtyTransactions = new LinkedHashMap<>();
+    private final LinkedHashMap<String, Versioned<ClaimRecord>> dirtyClaims = new LinkedHashMap<>();
     private final long metricsStartNanos = System.nanoTime();
     private List<String> cachedNames = List.of();
     private boolean namesDirty = true;
@@ -121,6 +208,22 @@ public final class MemoryStore {
             throw new IllegalArgumentException("Conflicting persisted transactionId: " + replay.transactionId());
         }
         pruneConsumeReplayCache(System.currentTimeMillis());
+    }
+
+    public synchronized void loadTransaction(KeyTransaction transaction) {
+        Objects.requireNonNull(transaction, "transaction");
+        KeyTransaction previous = transactions.putIfAbsent(transaction.transactionId(), transaction);
+        if (previous != null && !previous.equals(transaction)) {
+            throw new IllegalArgumentException("Conflicting persisted key transaction: " + transaction.transactionId());
+        }
+    }
+
+    public synchronized void loadClaim(ClaimRecord claim) {
+        Objects.requireNonNull(claim, "claim");
+        ClaimRecord previous = claims.putIfAbsent(claim.transactionId(), claim);
+        if (previous != null && !previous.equals(claim)) {
+            throw new IllegalArgumentException("Conflicting persisted claim: " + claim.transactionId());
+        }
     }
 
     public synchronized Account account(UUID player) {
@@ -290,6 +393,177 @@ public final class MemoryStore {
         return Optional.ofNullable(consumeReplays.get(transactionId));
     }
 
+    public synchronized CriticalMutation criticalConsume(
+            UUID player, KeyTier tier, long amount, String transactionId) {
+        Objects.requireNonNull(player, "player");
+        Objects.requireNonNull(tier, "tier");
+        validate(amount);
+        if (amount <= 0) throw new IllegalArgumentException("amount must be positive");
+        validateTransactionId(transactionId);
+
+        KeyTransaction previous = transactions.get(transactionId);
+        if (previous != null) {
+            if (!previous.sameRequest(TransactionKind.CONSUME, player, tier, amount, "")) {
+                throw new IllegalArgumentException("transactionId was already used for a different request");
+            }
+            return new CriticalMutation(true, previous);
+        }
+
+        Account old = current(player);
+        boolean success = old.amount(tier) >= amount;
+        long resultBalance = success ? old.amount(tier) - amount : old.amount(tier);
+        long now = System.currentTimeMillis();
+        long nextVersion = ++version;
+        if (success) putAtVersion(with(old, old.name(), tier, resultBalance), nextVersion);
+        KeyTransaction transaction = new KeyTransaction(transactionId, TransactionKind.CONSUME, player, tier,
+                amount, success ? amount : 0L, "", success ? TransactionOutcome.SUCCESS : TransactionOutcome.INSUFFICIENT,
+                resultBalance, now, now);
+        transactions.put(transactionId, transaction);
+        dirtyTransactions.put(transactionId, new Versioned<>(nextVersion, transaction));
+        return new CriticalMutation(false, transaction);
+    }
+
+    public synchronized CriticalMutation criticalGrant(
+            UUID player, KeyTier tier, long amount, long cap, String source, String transactionId) {
+        Objects.requireNonNull(player, "player");
+        Objects.requireNonNull(tier, "tier");
+        validate(amount);
+        validate(cap);
+        if (amount <= 0) throw new IllegalArgumentException("amount must be positive");
+        if (source == null || source.isBlank()) throw new IllegalArgumentException("source must not be blank");
+        validateTransactionId(transactionId);
+
+        KeyTransaction previous = transactions.get(transactionId);
+        if (previous != null) {
+            if (!previous.sameRequest(TransactionKind.EXTERNAL_GRANT, player, tier, amount, source)) {
+                throw new IllegalArgumentException("transactionId was already used for a different request");
+            }
+            return new CriticalMutation(true, previous);
+        }
+
+        Account old = current(player);
+        long applied = Math.min(amount, Math.max(0L, cap - old.amount(tier)));
+        long resultBalance = old.amount(tier) + applied;
+        long now = System.currentTimeMillis();
+        long nextVersion = ++version;
+        if (applied > 0) putAtVersion(with(old, old.name(), tier, resultBalance), nextVersion);
+        KeyTransaction transaction = new KeyTransaction(transactionId, TransactionKind.EXTERNAL_GRANT, player, tier,
+                amount, applied, source, TransactionOutcome.SUCCESS, resultBalance, now, now);
+        transactions.put(transactionId, transaction);
+        dirtyTransactions.put(transactionId, new Versioned<>(nextVersion, transaction));
+        return new CriticalMutation(false, transaction);
+    }
+
+    public synchronized Optional<KeyTransaction> transaction(String transactionId) {
+        return Optional.ofNullable(transactions.get(transactionId));
+    }
+
+    public synchronized boolean transactionDirty(String transactionId) {
+        return dirtyTransactions.containsKey(transactionId);
+    }
+
+    public synchronized ClaimRecord reserveClaim(
+            UUID player, Map<KeyTier, Long> amounts, String deliveryData, String transactionId) {
+        Objects.requireNonNull(player, "player");
+        Objects.requireNonNull(amounts, "amounts");
+        Objects.requireNonNull(deliveryData, "deliveryData");
+        validateTransactionId(transactionId);
+        if (claims.containsKey(transactionId)) throw new IllegalArgumentException("claim transactionId already exists");
+
+        EnumMap<KeyTier, Long> normalized = new EnumMap<>(KeyTier.class);
+        Account old = current(player);
+        long basic = old.basic(), rare = old.rare(), epic = old.epic(), legendary = old.legendary();
+        for (var entry : amounts.entrySet()) {
+            KeyTier tier = Objects.requireNonNull(entry.getKey(), "tier");
+            long value = Objects.requireNonNull(entry.getValue(), "amount");
+            if (value <= 0) continue;
+            validate(value);
+            if (old.amount(tier) < value) throw new IllegalStateException("Insufficient balance for claim reservation");
+            normalized.put(tier, value);
+            switch (tier) {
+                case BASIC -> basic -= value;
+                case RARE -> rare -= value;
+                case EPIC -> epic -= value;
+                case LEGENDARY -> legendary -= value;
+            }
+        }
+        if (normalized.isEmpty()) throw new IllegalArgumentException("claim amounts must not be empty");
+
+        long now = System.currentTimeMillis();
+        long nextVersion = ++version;
+        putAtVersion(new Account(player, old.name(), basic, rare, epic, legendary), nextVersion);
+        ClaimRecord record = new ClaimRecord(transactionId, player, normalized, deliveryData, ClaimState.RESERVED,
+                "", "", now, now, "");
+        claims.put(transactionId, record);
+        dirtyClaims.put(transactionId, new Versioned<>(nextVersion, record));
+        return record;
+    }
+
+    public synchronized ClaimRecord updateClaim(
+            String transactionId, ClaimState state, String beforeFingerprint, String afterFingerprint, String detail) {
+        ClaimRecord old = requireClaim(transactionId);
+        if (old.terminal() && old.state() != state) throw new IllegalStateException("claim is already terminal");
+        long nextVersion = ++version;
+        ClaimRecord next = new ClaimRecord(old.transactionId(), old.player(), old.amounts(), old.deliveryData(), state,
+                beforeFingerprint == null ? old.beforeFingerprint() : beforeFingerprint,
+                afterFingerprint == null ? old.afterFingerprint() : afterFingerprint,
+                old.createdAtEpochMillis(), System.currentTimeMillis(), detail);
+        claims.put(transactionId, next);
+        dirtyClaims.put(transactionId, new Versioned<>(nextVersion, next));
+        return next;
+    }
+
+    public synchronized ClaimRecord refundClaim(String transactionId, String detail) {
+        ClaimRecord oldClaim = requireClaim(transactionId);
+        if (oldClaim.state() == ClaimState.REFUNDED) return oldClaim;
+        if (oldClaim.state() == ClaimState.COMPLETED) throw new IllegalStateException("completed claim cannot be refunded");
+        Account old = current(oldClaim.player());
+        long basic = old.basic(), rare = old.rare(), epic = old.epic(), legendary = old.legendary();
+        for (var entry : oldClaim.amounts().entrySet()) {
+            switch (entry.getKey()) {
+                case BASIC -> basic = checkedAdd(basic, entry.getValue());
+                case RARE -> rare = checkedAdd(rare, entry.getValue());
+                case EPIC -> epic = checkedAdd(epic, entry.getValue());
+                case LEGENDARY -> legendary = checkedAdd(legendary, entry.getValue());
+            }
+        }
+        long nextVersion = ++version;
+        putAtVersion(new Account(oldClaim.player(), old.name(), basic, rare, epic, legendary), nextVersion);
+        ClaimRecord next = new ClaimRecord(oldClaim.transactionId(), oldClaim.player(), oldClaim.amounts(),
+                oldClaim.deliveryData(), ClaimState.REFUNDED, oldClaim.beforeFingerprint(), oldClaim.afterFingerprint(),
+                oldClaim.createdAtEpochMillis(), System.currentTimeMillis(), detail);
+        claims.put(transactionId, next);
+        dirtyClaims.put(transactionId, new Versioned<>(nextVersion, next));
+        return next;
+    }
+
+    public synchronized Optional<ClaimRecord> claim(String transactionId) {
+        return Optional.ofNullable(claims.get(transactionId));
+    }
+
+    public synchronized List<ClaimRecord> unresolvedClaims(UUID player) {
+        return claims.values().stream()
+                .filter(claim -> claim.player().equals(player) && !claim.terminal())
+                .sorted(Comparator.comparingLong(ClaimRecord::createdAtEpochMillis))
+                .toList();
+    }
+
+    public synchronized long unresolvedClaimCount() {
+        return claims.values().stream().filter(claim -> !claim.terminal()).count();
+    }
+
+    private ClaimRecord requireClaim(String transactionId) {
+        ClaimRecord claim = claims.get(transactionId);
+        if (claim == null) throw new IllegalArgumentException("Unknown claim transactionId: " + transactionId);
+        return claim;
+    }
+
+    private static void validateTransactionId(String transactionId) {
+        if (transactionId == null || transactionId.isBlank() || transactionId.length() > 128) {
+            throw new IllegalArgumentException("transactionId must contain 1-128 characters");
+        }
+    }
+
     /** Restore a multi-tier claim debit with one account replacement and one dirty version. */
     public synchronized void restore(UUID player, Map<KeyTier, Long> amounts) {
         Objects.requireNonNull(player, "player");
@@ -327,9 +601,13 @@ public final class MemoryStore {
     }
 
     private void put(Account account) {
+        putAtVersion(account, ++version);
+    }
+
+    private void putAtVersion(Account account, long targetVersion) {
         Account previous = accounts.put(account.player(), account);
         updateNameIndex(previous, account);
-        dirtyAccounts.put(account.player(), new Versioned<>(++version, account));
+        dirtyAccounts.put(account.player(), new Versioned<>(targetVersion, account));
     }
 
     private void updateNameIndex(Account previous, Account current) {
@@ -457,7 +735,35 @@ public final class MemoryStore {
         LinkedHashMap<UUID, Versioned<Account>> accountCopy = new LinkedHashMap<>();
         LinkedHashMap<Position, Versioned<Boolean>> blockCopy = new LinkedHashMap<>();
         LinkedHashMap<String, Versioned<ConsumeReplay>> consumeCopy = new LinkedHashMap<>();
+        LinkedHashMap<String, Versioned<KeyTransaction>> transactionCopy = new LinkedHashMap<>();
+        LinkedHashMap<String, Versioned<ClaimRecord>> claimCopy = new LinkedHashMap<>();
         int remaining = maximumRecords;
+
+        for (var entry : dirtyTransactions.entrySet()) {
+            if (entry.getValue().version() > upToVersion) continue;
+            Versioned<Account> account = dirtyAccounts.get(entry.getValue().value().player());
+            int required = 1 + (account != null && !accountCopy.containsKey(entry.getValue().value().player()) ? 1 : 0);
+            if (remaining < required) break;
+            if (account != null) {
+                accountCopy.put(entry.getValue().value().player(), account);
+                remaining--;
+            }
+            transactionCopy.put(entry.getKey(), entry.getValue());
+            remaining--;
+        }
+
+        for (var entry : dirtyClaims.entrySet()) {
+            if (entry.getValue().version() > upToVersion) continue;
+            Versioned<Account> account = dirtyAccounts.get(entry.getValue().value().player());
+            int required = 1 + (account != null && !accountCopy.containsKey(entry.getValue().value().player()) ? 1 : 0);
+            if (remaining < required) break;
+            if (account != null) {
+                accountCopy.put(entry.getValue().value().player(), account);
+                remaining--;
+            }
+            claimCopy.put(entry.getKey(), entry.getValue());
+            remaining--;
+        }
 
         for (var entry : dirtyConsumeReplays.entrySet()) {
             if (entry.getValue().version() > upToVersion) continue;
@@ -489,7 +795,7 @@ public final class MemoryStore {
                 }
             }
         }
-        return new Snapshot(accountCopy, blockCopy, consumeCopy);
+        return new Snapshot(accountCopy, blockCopy, consumeCopy, transactionCopy, claimCopy);
     }
 
     public synchronized void acknowledge(Snapshot snapshot) {
@@ -497,6 +803,8 @@ public final class MemoryStore {
         snapshot.accounts().forEach((id, saved) -> dirtyAccounts.remove(id, saved));
         snapshot.blocks().forEach((position, saved) -> dirtyBlocks.remove(position, saved));
         snapshot.consumes().forEach((id, saved) -> dirtyConsumeReplays.remove(id, saved));
+        snapshot.transactions().forEach((id, saved) -> dirtyTransactions.remove(id, saved));
+        snapshot.claims().forEach((id, saved) -> dirtyClaims.remove(id, saved));
         pruneConsumeReplayCache(System.currentTimeMillis());
     }
 
@@ -514,6 +822,11 @@ public final class MemoryStore {
     public synchronized int dirtyAccounts() { return dirtyAccounts.size(); }
     public synchronized int dirtyBlocks() { return dirtyBlocks.size(); }
     public synchronized int dirtyConsumes() { return dirtyConsumeReplays.size(); }
-    public synchronized int dirtyCount() { return dirtyAccounts.size() + dirtyBlocks.size() + dirtyConsumeReplays.size(); }
+    public synchronized int dirtyTransactions() { return dirtyTransactions.size(); }
+    public synchronized int dirtyClaims() { return dirtyClaims.size(); }
+    public synchronized int dirtyCount() {
+        return dirtyAccounts.size() + dirtyBlocks.size() + dirtyConsumeReplays.size()
+                + dirtyTransactions.size() + dirtyClaims.size();
+    }
     public synchronized long revision() { return version; }
 }
