@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CompletionStage;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
@@ -81,10 +82,26 @@ public final class PlexonKeysApiImpl implements PlexonKeysAPI {
         }
     }
 
+    @Deprecated
     @Override public KeyConsumeResult consumeKey(UUID playerId, String keyId, long amount, String transactionId) {
-        requirePrimaryThread();
+        throw new IllegalStateException("PlexonKeys 2.1 does not allow synchronous durable consume; use consumeKeyAsync");
+    }
+
+    @Override public CompletionStage<KeyConsumeResult> consumeKeyAsync(
+            UUID playerId, String keyId, long amount, String transactionId) {
         KeyTier tier = KeyTier.parse(Objects.requireNonNull(keyId, "keyId"));
-        return balances.consume(playerId, tier, amount, transactionId);
+        return balances.consumeAsync(Objects.requireNonNull(playerId, "playerId"), tier, amount, transactionId);
+    }
+
+    @Override public CompletionStage<KeyGrantResult> grantKeyAsync(
+            UUID playerId, String keyId, long amount, KeySource source, String transactionId) {
+        KeyTier tier = KeyTier.parse(Objects.requireNonNull(keyId, "keyId"));
+        return balances.grantAsync(Objects.requireNonNull(playerId, "playerId"), tier, amount,
+                Objects.requireNonNull(source, "source"), transactionId);
+    }
+
+    @Override public Optional<KeyTransactionView> transactionStatus(String transactionId) {
+        return balances.transactionStatus(Objects.requireNonNull(transactionId, "transactionId"));
     }
 
     @Override public Optional<String> identifyPhysicalKey(ItemStack item) {
