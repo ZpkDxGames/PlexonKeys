@@ -15,17 +15,25 @@ public record Settings(YamlConfiguration yaml, Text text, boolean enabled, long 
         Map<KeyTier, Category> categories, Map<Activity, Task> tasks,
         boolean trackGrowth, boolean trackFormation, boolean openWater, boolean requireDrops,
         Set<Material> miningMaterials, Set<Material> loggingMaterials, Set<EntityType> mobs, Set<SpawnReason> spawnReasons) {
-    public record Category(KeyTier tier, boolean enabled, String display, String permission, Map<Activity, Double> chances,
+    public record Category(KeyTier tier, boolean enabled, boolean visible, boolean claimable,
+            String display, String permission, Map<Activity, Double> chances,
             boolean announce, String announcement, boolean moneyEnabled, double money, boolean xpEnabled, int xp, ItemStack item) {
         public ItemStack itemCopy() { return item.clone(); }
     }
     public record Task(boolean enabled, long cooldownMillis, String display) {}
     public boolean allowsWorld(World world) {
         String name = world.getName().toLowerCase(Locale.ROOT);
-        return (worlds.isEmpty() || worlds.contains(name)) && !excludedWorlds.contains(name);
+        String scope = yaml.getString("settings.scope.mode", "ALL").trim().toUpperCase(Locale.ROOT);
+        boolean included = scope.equals("ALL") || scope.equals("ALLOWLIST") && worlds.contains(name);
+        return included && !excludedWorlds.contains(name);
     }
     public static Settings parse(YamlConfiguration c) {
-        if (c.getInt("config-version") != 1) throw new IllegalArgumentException("Unsupported config-version");
+        if (c.getInt("config-version") != 2) throw new IllegalArgumentException("Unsupported config-version");
+        String scope = c.getString("settings.scope.mode", "ALL").trim().toUpperCase(Locale.ROOT);
+        if (!Set.of("ALL", "ALLOWLIST").contains(scope)) throw new IllegalArgumentException("settings.scope.mode must be ALL or ALLOWLIST");
+        if (scope.equals("ALLOWLIST") && c.getStringList("settings.worlds").isEmpty()) {
+            throw new IllegalArgumentException("settings.worlds cannot be empty when settings.scope.mode=ALLOWLIST");
+        }
         validateTypes(c);
         long cap = integer(c, "settings.max-virtual-per-category", 1, 1_000_000_000);
         Object enabledRaw = c.get("storage.checkpoints.enabled");
@@ -49,7 +57,8 @@ public record Settings(YamlConfiguration yaml, Text text, boolean enabled, long 
             for (Activity task : Activity.values()) chances.put(task, number(c, path + ".chances." + task.id(), 0, 100));
             double money = number(c, path + ".bonus.money.amount", 0, 1_000_000_000);
             int xp = (int) integer(c, path + ".bonus.xp.points", 0, 1_000_000);
-            categories.put(tier, new Category(tier, c.getBoolean(path + ".enabled"), c.getString(path + ".display-name"),
+            categories.put(tier, new Category(tier, c.getBoolean(path + ".enabled"),
+                    c.getBoolean(path + ".visible"), c.getBoolean(path + ".claimable"), c.getString(path + ".display-name"),
                     c.getString(path + ".permission", ""), Map.copyOf(chances), c.getBoolean(path + ".announce.enabled"),
                     c.getString(path + ".announce.message", ""), c.getBoolean(path + ".bonus.money.enabled"), money,
                     c.getBoolean(path + ".bonus.xp.enabled"), xp, Items.key(c, path + ".item")));
