@@ -1,29 +1,32 @@
 package com.antondev.keys.service;
 
 import com.antondev.keys.PlexonKeys;
-import com.antondev.keys.api.KeyConsumeResult;
-import com.antondev.keys.api.KeySource;
+import com.antondev.keys.api.*;
 import com.antondev.keys.data.MemoryStore;
-import com.antondev.keys.event.PlexonKeyConsumedEvent;
-import com.antondev.keys.event.PlexonKeyEarnedEvent;
+import com.antondev.keys.event.*;
 import com.antondev.keys.model.KeyTier;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.*;
+import java.util.function.Supplier;
 import java.util.logging.Level;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 
-/** Central domain service for every virtual-key balance mutation. */
+/** Central domain service for virtual-key balance mutation and durable external transactions. */
 public final class KeyBalanceService {
     public record GrantResult(long credited, long balance) {}
 
     private final PlexonKeys plugin;
     private final MemoryStore data;
+    private final KeyTransactionCoordinator transactions;
 
-    public KeyBalanceService(PlexonKeys plugin, MemoryStore data) {
+    public KeyBalanceService(PlexonKeys plugin, MemoryStore data, KeyTransactionCoordinator transactions) {
         this.plugin = Objects.requireNonNull(plugin, "plugin");
         this.data = Objects.requireNonNull(data, "data");
+        this.transactions = Objects.requireNonNull(transactions, "transactions");
     }
 
     public long balance(UUID playerId, KeyTier tier) {
@@ -34,12 +37,11 @@ public final class KeyBalanceService {
         return data.balances(requirePlayerId(playerId));
     }
 
-    /** Gameplay acquisition path. Fires exactly one earned event when a positive credit commits. */
+    /** Gameplay acquisition path. Fires exactly one earned event when a positive credit commits to memory. */
     public long grant(Player player, KeyTier tier, long amount, String source) {
         return grantResult(player, tier, amount, source).credited();
     }
 
-    /** Gameplay hot path with the committed post-mutation balance returned without a second store read. */
     public GrantResult grantResult(Player player, KeyTier tier, long amount, String source) {
         Objects.requireNonNull(player, "player");
         validatePositive(amount);
@@ -51,7 +53,10 @@ public final class KeyBalanceService {
         return new GrantResult(mutation.delta(), mutation.current());
     }
 
-    /** Public/API acquisition path. Offline balances are supported; Bukkit earned events require an online Player. */
+    /**
+     * Legacy ordinary grant. This is retained for source compatibility; integrations requiring a durable
+     * idempotent reward must use grantAsync.
+     */
     public long grant(UUID playerId, KeyTier tier, long amount, KeySource source) {
         UUID id = requirePlayerId(playerId);
         Player online = Bukkit.getPlayer(id);
@@ -59,6 +64,26 @@ public final class KeyBalanceService {
         validatePositive(amount);
         KeyTier keyTier = Objects.requireNonNull(tier, "tier");
         return data.credit(id, keyTier, amount, plugin.settings().cap());
+    }
+
+    public CompletionStage<KeyGrantResult> grantAsync(
+            UUID playerId, KeyTier tier, long amount, KeySource source, String transactionId) {
+        UUID id = requirePlayerId(playerId);
+        KeyTier keyTier = Objects.requireNonNull(tier, "tier");
+        KeySource keySource = Objects.requireNonNull(source, "source");
+        validatePositive(amount);
+        return transactions.grant(id, keyTier, amount, plugin.settings().cap(), keySource, transactionId)
+                .thenCompose(result -> {
+                    if (result.status() != KeyGrantResult.Status.SUCCESS) {
+                        return CompletableFuture.completedFuture(result);
+                    }
+                    return onMainThread(() -> {
+                        publishGranted(id, keyTier, result.credited(), keySource, transactionId, result.balance());
+                        Player online = Bukkit.getPlayer(id);
+                        if (online != null) plugin.menus().refreshPlayer(online);
+                        return result;
+                    });
+                });
     }
 
     /** Administrative acquisition path. */
@@ -70,7 +95,7 @@ public final class KeyBalanceService {
         return data.credit(id, Objects.requireNonNull(tier, "tier"), amount, plugin.settings().cap());
     }
 
-    /** Removal path used by API/admin operations. Never emits an earned event. */
+    /** Removal path used by legacy API/admin operations. Never emits an earned event. */
     public long take(UUID playerId, KeyTier tier, long amount) {
         validatePositive(amount);
         MemoryStore.BalanceMutation mutation = data.take(
@@ -87,51 +112,78 @@ public final class KeyBalanceService {
     }
 
     /**
-     * Crash-durable exact-once virtual consume boundary for crate/opening integrations. The debit and the
-     * bounded transaction-id replay record are committed in one SQLite transaction before SUCCESS returns.
+     * Synchronous durable consume is intentionally unavailable in 2.1. Blocking the Paper primary thread
+     * would violate the stable persistence contract.
      */
-    public synchronized KeyConsumeResult consume(UUID playerId, KeyTier tier, long amount, String transactionId) {
+    @Deprecated
+    public KeyConsumeResult consume(UUID playerId, KeyTier tier, long amount, String transactionId) {
+        throw new IllegalStateException("Synchronous durable consume is disabled; use consumeAsync");
+    }
+
+    public CompletionStage<KeyConsumeResult> consumeAsync(
+            UUID playerId, KeyTier tier, long amount, String transactionId) {
         UUID id = requirePlayerId(playerId);
         KeyTier keyTier = Objects.requireNonNull(tier, "tier");
         validatePositive(amount);
-        if (transactionId == null || transactionId.isBlank() || transactionId.length() > 128) {
-            throw new IllegalArgumentException("transactionId must contain 1-128 characters");
-        }
-
-        MemoryStore.ConsumeMutation mutation = data.consume(id, keyTier, amount, transactionId);
-        if (mutation.duplicate()) {
-            // A duplicate can still be dirty only when an earlier durability barrier failed. Retrying the same
-            // request is allowed to finish that pending commit, but can never debit a second time.
-            if (data.consumeReplayDirty(transactionId)) plugin.persistCriticalState("consume retry " + transactionId);
-            return new KeyConsumeResult(KeyConsumeResult.Status.DUPLICATE, transactionId, keyTier.id(), amount,
-                    0, data.balance(id, keyTier));
-        }
-
-        // This barrier is intentionally not used by block/reward hot paths. It serializes through the existing
-        // single bounded database worker and returns only after the account + replay record commit succeeds.
-        plugin.persistCriticalState("consume " + transactionId);
-        if (!mutation.success()) {
-            return new KeyConsumeResult(KeyConsumeResult.Status.INSUFFICIENT, transactionId,
-                    keyTier.id(), amount, 0, data.balance(id, keyTier));
-        }
-
-        long current = data.balance(id, keyTier);
-        KeyConsumeResult result = new KeyConsumeResult(KeyConsumeResult.Status.SUCCESS, transactionId,
-                keyTier.id(), amount, amount, current);
-        publishConsumed(id, keyTier, amount, transactionId);
-        return result;
+        return transactions.consume(id, keyTier, amount, transactionId)
+                .thenCompose(result -> {
+                    if (result.status() != KeyConsumeResult.Status.SUCCESS) {
+                        return CompletableFuture.completedFuture(result);
+                    }
+                    return onMainThread(() -> {
+                        publishConsumed(id, keyTier, result.consumed(), transactionId);
+                        Player online = Bukkit.getPlayer(id);
+                        if (online != null) plugin.menus().refreshPlayer(online);
+                        return result;
+                    });
+                });
     }
 
-    public synchronized int consumeReplayGuardSize() { return data.consumeReplayCount(); }
+    public Optional<KeyTransactionView> transactionStatus(String transactionId) {
+        return transactions.status(transactionId);
+    }
 
-    /** Atomic pre-delivery claim debit. Never emits an earned event. */
+    public int consumeReplayGuardSize() { return data.consumeReplayCount(); }
+
+    /** Legacy claim helpers retained for migration tests; 2.1 ClaimService uses the durable journal. */
     public boolean debitForClaim(UUID playerId, Map<KeyTier, Long> amounts) {
         return data.debit(requirePlayerId(playerId), Objects.requireNonNull(amounts, "amounts"));
     }
 
-    /** Silent recovery used only when physical claim delivery failed after debit. */
     public void silentRestore(UUID playerId, Map<KeyTier, Long> amounts) {
         data.restore(requirePlayerId(playerId), Objects.requireNonNull(amounts, "amounts"));
+    }
+
+    private <T> CompletionStage<T> onMainThread(Supplier<T> callback) {
+        if (Bukkit.isPrimaryThread()) {
+            try {
+                return CompletableFuture.completedFuture(callback.get());
+            } catch (Throwable error) {
+                return CompletableFuture.failedFuture(error);
+            }
+        }
+        CompletableFuture<T> future = new CompletableFuture<>();
+        try {
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                try {
+                    future.complete(callback.get());
+                } catch (Throwable error) {
+                    future.completeExceptionally(error);
+                }
+            });
+        } catch (RuntimeException schedulingFailure) {
+            // Persistence already committed. A disabled plugin cannot safely publish Bukkit callbacks.
+            plugin.getLogger().log(Level.WARNING,
+                    "A durable PlexonKeys transaction committed but its main-thread callback could not be scheduled",
+                    schedulingFailure);
+            try {
+                future.complete(callback.get());
+            } catch (Throwable callbackFailure) {
+                schedulingFailure.addSuppressed(callbackFailure);
+                future.completeExceptionally(schedulingFailure);
+            }
+        }
+        return future;
     }
 
     private void publishEarned(Player player, KeyTier tier, long amount, String source) {
@@ -140,7 +192,8 @@ public final class KeyBalanceService {
         try {
             Bukkit.getPluginManager().callEvent(event);
         } catch (RuntimeException error) {
-            plugin.getLogger().log(Level.WARNING, "A PlexonKeyEarnedEvent listener failed after key credit committed", error);
+            plugin.getLogger().log(Level.WARNING,
+                    "A PlexonKeyEarnedEvent listener failed after key credit committed", error);
         }
     }
 
@@ -148,7 +201,19 @@ public final class KeyBalanceService {
         try {
             Bukkit.getPluginManager().callEvent(new PlexonKeyConsumedEvent(playerId, tier, amount, transactionId));
         } catch (RuntimeException error) {
-            plugin.getLogger().log(Level.WARNING, "A PlexonKeyConsumedEvent listener failed after key debit committed", error);
+            plugin.getLogger().log(Level.WARNING,
+                    "A PlexonKeyConsumedEvent listener failed after key debit committed", error);
+        }
+    }
+
+    private void publishGranted(UUID playerId, KeyTier tier, long amount, KeySource source,
+                                String transactionId, long resultingBalance) {
+        try {
+            Bukkit.getPluginManager().callEvent(new PlexonKeyGrantedEvent(
+                    playerId, tier, amount, source, transactionId, resultingBalance));
+        } catch (RuntimeException error) {
+            plugin.getLogger().log(Level.WARNING,
+                    "A PlexonKeyGrantedEvent listener failed after durable key grant committed", error);
         }
     }
 
