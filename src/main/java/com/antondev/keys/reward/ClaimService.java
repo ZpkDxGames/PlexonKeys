@@ -26,12 +26,17 @@ public final class ClaimService {
         if (!claiming.add(playerId)) return;
 
         try {
+            if (only != null && !plugin.settings().categories().get(only).claimable()) {
+                text.send(player, "not-claimable");
+                return;
+            }
             Map<KeyTier, Long> balances = plugin.balances().balances(playerId);
             var amounts = new EnumMap<KeyTier, Long>(KeyTier.class);
             var templates = new EnumMap<KeyTier, ItemStack>(KeyTier.class);
             boolean any = false;
             for (KeyTier tier : KeyTier.values()) {
                 if (only != null && tier != only) continue;
+                if (!plugin.settings().categories().get(tier).claimable()) continue;
                 long requested = Math.min(balances.getOrDefault(tier, 0L), one ? 1L : Long.MAX_VALUE);
                 amounts.put(tier, requested);
                 templates.put(tier, plugin.settings().categories().get(tier).itemCopy());
