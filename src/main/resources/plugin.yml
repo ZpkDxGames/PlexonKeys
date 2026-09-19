@@ -5,7 +5,7 @@ api-version: '26.2'
 description: Premium key identity, acquisition provenance, virtual balances, physical claims, and integrations for Plexon.
 author: Tonim (ZpkDxGames)
 website: https://github.com/ZpkDxGames/PlexonKeys
-softdepend: [PlexonCore, Vault, PlaceholderAPI, PlexonSpawners, PlexonCrates]
+softdepend: [PlexonCore, Vault, PlaceholderAPI, PlexonSpawners]
 commands:
   keys:
     description: Open your virtual key collection.
