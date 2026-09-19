@@ -89,13 +89,13 @@ class CoreMigrationTest extends PluginTestBase {
         assertTrue(capture.earned.isEmpty());
     }
 
-    @Test void claimAllUsesSharedTransactionAndUniqueTierEventIds() {
+    @Test void claimAllUsesSharedTransactionAndUniqueTierEventIds() throws Exception {
         Capture capture = capture();
         plugin.data().credit(player.getUniqueId(), KeyTier.BASIC, 3, plugin.settings().cap());
         plugin.data().credit(player.getUniqueId(), KeyTier.RARE, 2, plugin.settings().cap());
         plugin.data().credit(player.getUniqueId(), KeyTier.EPIC, 1, plugin.settings().cap());
 
-        plugin.claims().claim(player, null, false);
+        plugin.claims().claim(player, null, false); settleAsync();
 
         assertEquals(3, capture.claimed.size());
         Set<String> transactions = new HashSet<>();
