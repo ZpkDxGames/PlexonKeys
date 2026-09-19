@@ -229,7 +229,11 @@ public class PlexonKeys extends JavaPlugin implements Listener {
             throw new IllegalArgumentException("core-runtime.mode must be AUTO, CORE, or LOCAL");
         }
         boolean blocksEnabled = settings().yaml().getBoolean("core-runtime.activities.blocks", true);
-        boolean tryCore = !requested.equals("LOCAL") && blocksEnabled;
+        boolean requiresPreferredToolFact = settings().requireDrops();
+        if (requested.equals("CORE") && blocksEnabled && requiresPreferredToolFact) {
+            throw new IllegalStateException("core-runtime.mode=CORE cannot preserve activities.mining.require-drops because Core 2.1 does not expose preferred-tool eligibility; use AUTO or LOCAL");
+        }
+        boolean tryCore = !requested.equals("LOCAL") && blocksEnabled && !requiresPreferredToolFact;
         Set<Material> route = blockRouteMaterials();
 
         if (tryCore && coreRuntime != null && coreRuntime.available() && !route.isEmpty()) {
@@ -313,26 +317,14 @@ public class PlexonKeys extends JavaPlugin implements Listener {
             return;
         }
 
-        boolean preferred = true;
+        // Core mode is selected only when require-drops is disabled. Do not re-read the broken
+        // coordinate after the Core MONITOR callback; it may already be air.
         if (settings().requireDrops()) {
-            if (!fact.dropItems()) {
-                coreDropRejected.incrementAndGet();
-                return;
-            }
-            World world = Bukkit.getWorld(fact.worldId());
-            if (world == null) {
-                coreDropRejected.incrementAndGet();
-                return;
-            }
-            preferred = world.getBlockAt(fact.x(), fact.y(), fact.z())
-                    .isPreferredTool(player.getInventory().getItemInMainHand());
-            if (!preferred) {
-                coreDropRejected.incrementAndGet();
-                return;
-            }
+            coreDropRejected.incrementAndGet();
+            return;
         }
 
-        if (blockProcessor.tryPerform(player, activity, origin, fact.dropItems(), preferred)) {
+        if (blockProcessor.tryPerform(player, activity, origin, fact.dropItems(), true)) {
             coreRewardAttempts.incrementAndGet();
         }
     }
