@@ -2,10 +2,13 @@
 # Paper 26.2 / Java 25. ALL text uses MiniMessage, not legacy & color codes.
 # Percentages: 1.0 = 1%, 0.05 = 0.05%, 100 = always, 0 = never.
 # Configure in /keysadmin, or edit this file and run /keysadmin reload.
-config-version: 1
+config-version: 2
 
 settings:
   enabled: true
+  # ALL preserves legacy empty-world behavior. ALLOWLIST requires settings.worlds.
+  scope:
+    mode: ALL
   # INDEPENDENT: each category rolls once; multiple categories can win per action.
   # HIGHEST_ONLY: Legendary -> Epic -> Rare -> Basic, stop after the first success.
   # In HIGHEST_ONLY, lower categories' effective chances are reduced by prior rolls.
@@ -17,6 +20,8 @@ settings:
   excluded-worlds: []
 
 storage:
+  checkpoints:
+    enabled: true
   # Always performs a final controlled save on normal shutdown/plugin disable.
   # New installs checkpoint dirty rows every 60 seconds on one background worker.
   # Existing configs are never overwritten: keep 0 if you intentionally want shutdown-only saving.
@@ -29,6 +34,19 @@ storage:
   maximum-snapshot-records: 4096
   # Maximum controlled-shutdown wait for the final database save.
   shutdown-timeout-seconds: 15
+
+core-runtime:
+  # AUTO uses Core 2.1 only when its committed facts preserve configured semantics.
+  mode: AUTO
+  activities:
+    blocks: true
+
+integrations:
+  spawners:
+    # Paper/WildStacker spawner provenance is external by default and therefore ineligible.
+    allow-plexon-origin: false
+    allow-external-spawner-origin: false
+    allow-unknown-origin: false
 
 performance:
   # Multiple rewards/claims while /keys is open are merged into one menu refresh window.
@@ -103,7 +121,8 @@ activities:
     types: []
     # Paper stores the original spawn reason. Spawners, eggs, commands, breeding,
     # and custom-plugin mobs are excluded by default. [] allows all spawn reasons.
-    allowed-spawn-reasons: [NATURAL, CHUNK_GEN, PATROL, RAID, REINFORCEMENTS]
+    # Empty delegates eligibility to the fail-closed provenance classifier.
+    allowed-spawn-reasons: []
 
 notifications:
   personal-chat: true
@@ -114,6 +133,8 @@ notifications:
 categories:
   basic:
     enabled: true
+    visible: true
+    claimable: true
     display-name: '<gradient:#C7CDD8:#F3F5F7><bold>Basic</bold></gradient>'
     permission: ''
     chances: {mining: 0.20, logging: 0.35, fishing: 3.0, mobs: 0.75}
@@ -142,6 +163,8 @@ categories:
       lore: ['', '<gray>Virtual keys</gray> <dark_gray>»</dark_gray> <white><balance></white>', '', '<gray>Mine, fish, chop, and explore.</gray>', '<dark_gray>Claim your keys using the panel below.</dark_gray>']
   rare:
     enabled: true
+    visible: true
+    claimable: true
     display-name: '<gradient:#56B9F2:#92E1FF><bold>Rare</bold></gradient>'
     permission: ''
     chances: {mining: 0.06, logging: 0.10, fishing: 1.0, mobs: 0.25}
@@ -166,6 +189,8 @@ categories:
       lore: ['', '<gray>Virtual keys</gray> <dark_gray>»</dark_gray> <white><balance></white>', '', '<gray>A bright find from a busy day.</gray>', '<dark_gray>Claim your keys using the panel below.</dark_gray>']
   epic:
     enabled: true
+    visible: true
+    claimable: true
     display-name: '<gradient:#B883F5:#E2B3FF><bold>Epic</bold></gradient>'
     permission: ''
     chances: {mining: 0.015, logging: 0.025, fishing: 0.25, mobs: 0.07}
@@ -190,6 +215,8 @@ categories:
       lore: ['', '<gray>Virtual keys</gray> <dark_gray>»</dark_gray> <white><balance></white>', '', '<gray>For the wonderfully lucky.</gray>', '<dark_gray>Claim your keys using the panel below.</dark_gray>']
   legendary:
     enabled: true
+    visible: true
+    claimable: true
     display-name: '<gradient:#FFB347:#FFE59A><bold>Legendary</bold></gradient>'
     permission: ''
     chances: {mining: 0.003, logging: 0.005, fishing: 0.05, mobs: 0.015}
@@ -291,6 +318,7 @@ messages:
   claimed: '<green>Delivered <amount> key(s).</green> <gray><remaining> remain virtual.</gray>'
   inventory-full: '<yellow>Your inventory has no room. Your keys remain virtual.</yellow>'
   no-keys: '<gray>You do not have any keys to claim here yet.</gray>'
+  not-claimable: '<yellow>This key category is currently virtual-only and cannot be claimed physically.</yellow>'
   invalid-category: '<red>Choose basic, rare, epic, legendary, or all when claiming.</red>'
   invalid-amount: '<red>Enter a whole number between <min> and <max>.</red>'
   player-not-found: '<red>That player has not been recorded. Use an online name, a known name, or their UUID.</red>'
