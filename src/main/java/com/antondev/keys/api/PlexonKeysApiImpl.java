@@ -105,11 +105,9 @@ public final class PlexonKeysApiImpl implements PlexonKeysAPI {
         Settings.Category category = plugin.settings().categories().get(tier);
         String path = "categories." + tier.id();
         String mode = plugin.settings().yaml().getString(path + ".item.mode", "CONFIG").trim().toUpperCase(Locale.ROOT);
-        String crate = plugin.settings().yaml().getString("integrations.crates.mappings." + tier.id(), tier.id());
-        boolean visible = plugin.settings().yaml().getBoolean(path + ".visible", true);
-        boolean claimable = plugin.settings().yaml().getBoolean(path + ".claimable", true);
+        // crateMapping remains a binary-compatibility record component only. PlexonCrates is retired.
         return new KeyDefinitionView(tier.id(), category.display(), category.permission(), category.enabled(),
-                visible, claimable, mode, crate == null ? tier.id() : crate, category.chances());
+                category.visible(), category.claimable(), mode, tier.id(), category.chances());
     }
 
     private static void requirePrimaryThread() {
