@@ -10,7 +10,7 @@ public record KeyConsumeResult(
         long requested,
         long consumed,
         long balance) {
-    public enum Status { SUCCESS, INSUFFICIENT, DUPLICATE }
+    public enum Status { SUCCESS, INSUFFICIENT, DUPLICATE, PERSISTENCE_UNCERTAIN }
 
     public KeyConsumeResult {
         Objects.requireNonNull(status, "status");
